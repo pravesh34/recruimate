@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-ink-50 text-ink-900 font-sans antialiased;
+    background-image: radial-gradient(circle at 15% 0%, rgba(59, 118, 246, 0.06), transparent 45%),
+      radial-gradient(circle at 90% 10%, rgba(124, 92, 252, 0.05), transparent 40%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-brand-200 text-brand-950;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-ink-200/70 bg-white shadow-card;
+  }
+  .card-pad {
+    @apply p-5 sm:p-6;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:bg-brand-800;
+  }
+  .btn-secondary {
+    @apply btn border border-ink-200 bg-white text-ink-700 hover:border-ink-300 hover:bg-ink-50;
+  }
+  .btn-ghost {
+    @apply btn text-ink-600 hover:bg-ink-100;
+  }
+  .btn-danger {
+    @apply btn border border-red-200 bg-red-50 text-red-700 hover:bg-red-100;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  .input {
+    @apply w-full rounded-xl border border-ink-200 bg-white px-3.5 py-2.5 text-sm text-ink-900
+      placeholder:text-ink-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-ink-200 bg-ink-50 px-2.5 py-1 text-xs font-medium text-ink-700;
+  }
+  .chip-blue {
+    @apply chip border-brand-200 bg-brand-50 text-brand-700;
+  }
+  .chip-green {
+    @apply chip border-emerald-200 bg-emerald-50 text-emerald-700;
+  }
+  .chip-amber {
+    @apply chip border-amber-200 bg-amber-50 text-amber-700;
+  }
+  .chip-red {
+    @apply chip border-red-200 bg-red-50 text-red-700;
+  }
+  .chip-violet {
+    @apply chip border-violet-200 bg-violet-50 text-violet-700;
+  }
+  .section-title {
+    @apply text-lg font-semibold tracking-tight text-ink-900;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-600;
+  }
+  .muted {
+    @apply text-sm text-ink-500;
+  }
+  .nav-link {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-brand-100/70
+      transition hover:bg-white/10 hover:text-white;
+  }
+  .nav-link-active {
+    @apply bg-white/10 text-white shadow-inner;
+  }
+  .divider {
+    @apply h-px w-full bg-ink-200/70;
+  }
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .bg-grid {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+}
