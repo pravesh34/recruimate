@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # OpenRouter
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "openrouter/free"
+    openrouter_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
     # Groq
     groq_api_key: str = ""
