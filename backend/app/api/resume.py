@@ -15,6 +15,7 @@ from ..database.models import (
     ResumeProfile,
     SkillGapReport,
     User,
+    ensure_default_user,
     get_db,
 )
 from ..gateway import GatewayManager

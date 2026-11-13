@@ -96,6 +96,32 @@ class JobAnalysis(Base, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(64), default="heuristic")
 
 
+class JobPosting(Base, TimestampMixin):
+    """Imported job-board posting used by the job-search ranking feature.
+
+    Unlike :class:`JobAnalysis` (a pasted/analysed description), postings come
+    from an import pipeline or the demo seeder. ``parsed`` holds structured
+    skills/experience so the deterministic compatibility agent can score
+    against them without an LLM call.
+    """
+
+    __tablename__ = "job_postings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), index=True, nullable=True
+    )
+    source: Mapped[str] = mapped_column(String(64), default="")
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    title: Mapped[str] = mapped_column(String(255), default="")
+    company: Mapped[str] = mapped_column(String(255), default="")
+    location: Mapped[str] = mapped_column(String(255), default="")
+    raw_text: Mapped[str] = mapped_column(Text, default="")
+    parsed: Mapped[dict] = mapped_column(JSON, default=dict)
+    provider: Mapped[str] = mapped_column(String(64), default="heuristic")
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
 class CompatibilityReport(Base, TimestampMixin):
     __tablename__ = "compatibility_reports"
 
