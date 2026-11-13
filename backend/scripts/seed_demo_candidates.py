@@ -13,15 +13,11 @@ The script is idempotent: re-running updates the profiles in place.
 """
 from __future__ import annotations
 
-import json
-import sqlite3
 import sys
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
-
-DB_PATH = BACKEND_DIR / "data" / "recruimate.db"
 
 DEMO_PASSWORD = "RecruiMate@123"
 
@@ -386,99 +382,28 @@ def build_resume_text(c: dict) -> str:
 
 
 def seed() -> None:
-    from app.core.auth import hash_password
-    from app.database.models import (
-        AuthSession,
-        Base,
-        JobAnalysis,
-        ResumeProfile,
-        User,
-        engine,
-        init_db,
+    """Thin wrapper over app.database.seed (SQLAlchemy, respects DATABASE_URL)."""
+    from app.database.models import SessionLocal
+    from app.database.seed import (
+        dump_state,
+        reset_demo_data,
+        seed_demo_candidates,
     )
-    from app.schemas import CandidateProfile
 
-    init_db()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    password_hash = hash_password(DEMO_PASSWORD)
-
-    for c in CANDIDATES:
-        email = c["email"]
-
-        # --- user account -------------------------------------------------
-        cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
-        row = cursor.fetchone()
-        if row:
-            user_id = row[0]
-            cursor.execute(
-                "UPDATE users SET display_name = ?, password_hash = ?, role = 'candidate', "
-                "is_active = 1, is_demo = 1, is_local = 0 WHERE id = ?",
-                (c["display_name"], password_hash, user_id),
-            )
-        else:
-            cursor.execute(
-                "INSERT INTO users (email, display_name, password_hash, role, is_active, "
-                "is_demo, is_local, created_at, updated_at) "
-                "VALUES (?, ?, ?, 'candidate', 1, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                (email, c["display_name"], password_hash),
-            )
-            user_id = cursor.lastrowid
-
-        # --- resume profile -----------------------------------------------
-        profile = {
-            "name": c["display_name"],
-            "headline": c["headline"],
-            "email": email,
-            "phone": c["phone"],
-            "location": c["location"],
-            "summary": c["summary"],
-            "skills": c["skills"],
-            "soft_skills": c["soft_skills"],
-            "education": c["education"],
-            "experience": c["experience"],
-            "projects": c["projects"],
-            "certifications": c["certifications"],
-            "achievements": [],
-            "resume_strengths": [],
-            "resume_weaknesses": [],
-            "improvement_suggestions": [],
-            "unknown_fields": [],
-            "years_experience": c["years_experience"],
-        }
-        # Validate against the real schema so nothing silently drifts.
-        CandidateProfile.model_validate(profile)
-
-        raw_text = build_resume_text(c)
-
-        cursor.execute(
-            "SELECT id FROM resume_profiles WHERE user_id = ? AND filename = ?",
-            (user_id, c["resume_filename"]),
-        )
-        row = cursor.fetchone()
-        if row:
-            cursor.execute(
-                "UPDATE resume_profiles SET raw_text = ?, profile = ?, provider = 'demo' WHERE id = ?",
-                (raw_text, json.dumps(profile), row[0]),
-            )
-            resume_id = row[0]
-        else:
-            cursor.execute(
-                "INSERT INTO resume_profiles (user_id, filename, storage_path, raw_text, profile, "
-                "provider, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, 'demo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                (user_id, c["resume_filename"], "", raw_text, json.dumps(profile)),
-            )
-            resume_id = cursor.lastrowid
-
-        print(f"  {email:<28} user_id={user_id:<3} resume_id={resume_id:<3} {c['display_name']}")
-
-    conn.commit()
-    conn.close()
-    print(f"\nSeeded {len(CANDIDATES)} demo candidates.")
-    print(f"Password for every demo account: {DEMO_PASSWORD}")
+    reset = "--reset" in sys.argv[1:]
+    db = SessionLocal()
+    try:
+        if reset:
+            reset_demo_data(db)
+            print("Removed previously seeded demo accounts.")
+        created = seed_demo_candidates(db)
+        for c in CANDIDATES:
+            print(f"  {c['email']:<28} {c['display_name']}")
+        state = dump_state(db)
+        print(f"\nSeeded {created} new demo candidate(s). {state['users']} demo account(s) total.")
+        print(f"Password for every demo account: {DEMO_PASSWORD}")
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

@@ -131,9 +131,14 @@ def update_routing(payload: RoutingUpdateRequest, gateway: GatewayManager = Depe
 
 
 @router.get("/usage")
-def provider_usage(limit: int = 50, db: Session = Depends(get_db)):
+def provider_usage(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     rows = (
         db.query(UsageLog)
+        .filter(UsageLog.user_id == user.id)
         .order_by(UsageLog.created_at.desc(), UsageLog.id.desc())
         .limit(min(limit, 200))
         .all()

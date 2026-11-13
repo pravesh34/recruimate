@@ -15,7 +15,6 @@ from ..database.models import (
     ResumeProfile,
     SkillGapReport,
     User,
-    ensure_default_user,
     get_db,
 )
 from ..gateway import GatewayManager
@@ -70,7 +69,7 @@ async def upload_resume(
     except ResumeParseError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    user = ensure_default_user(db)
+    user_id = user.id  # the authenticated caller owns this upload
     stored_name = f"{uuid.uuid4().hex}_{Path(filename).name}"[:200]
     path = settings.upload_path / stored_name
     path.write_bytes(data)
@@ -80,7 +79,7 @@ async def upload_resume(
         pass
 
     record = ResumeProfile(
-        user_id=user.id,
+        user_id=user_id,
         filename=filename[:255],
         storage_path=str(path),
         raw_text=raw_text,

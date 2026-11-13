@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 import datetime as dt
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..core import ratelimit
 from ..core.auth import (
     create_access_token,
     generate_refresh_token,
     hash_password,
     hash_refresh_token,
     is_session_active,
+    legacy_hash_refresh_token,
     password_strength_errors,
     refresh_token_expiry,
     verify_password,
@@ -67,6 +70,7 @@ def _issue_tokens(
     db: Session,
     user: User,
     request: Request | None = None,
+    family_id: str | None = None,
 ) -> dict:
     """Create an access token plus a persisted refresh session."""
     access_token, expires_in = create_access_token(user.id, user.role, user.email)
@@ -75,6 +79,9 @@ def _issue_tokens(
     session = AuthSession(
         user_id=user.id,
         token_hash=hash_refresh_token(refresh_token),
+        # A fresh login starts a new session family; a refresh reuses the
+        # parent's family id so replay detection can revoke the whole chain.
+        family_id=family_id or secrets.token_urlsafe(16),
         expires_at=refresh_token_expiry(),
         user_agent=(request.headers.get("user-agent", "")[:512] if request else ""),
         ip_address=(request.client.host[:64] if request and request.client else ""),
@@ -98,6 +105,34 @@ def _find_user(db: Session, email: str) -> User | None:
     return db.query(User).filter(User.email == email.strip().lower()).first()
 
 
+def _revoke_family(db: Session, session: AuthSession) -> None:
+    """Revoke every session in the same login/refresh family.
+
+    Sessions created before ``family_id`` existed have an empty family id;
+    for those fall back to revoking all of the user's sessions, which is the
+    conservative response to a replayed token.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    if session.family_id:
+        rows = (
+            db.query(AuthSession)
+            .filter(AuthSession.user_id == session.user_id)
+            .filter(AuthSession.family_id == session.family_id)
+            .filter(AuthSession.revoked_at.is_(None))
+            .all()
+        )
+    else:
+        rows = (
+            db.query(AuthSession)
+            .filter(AuthSession.user_id == session.user_id)
+            .filter(AuthSession.revoked_at.is_(None))
+            .all()
+        )
+    for row in rows:
+        row.revoked_at = now
+    db.commit()
+
+
 # --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
@@ -113,6 +148,11 @@ def auth_status(db: Session = Depends(get_db)):
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     """Create a new candidate account and sign it in."""
+    rate_key = ratelimit.key_for(request.client.host if request.client else "", payload.email)
+    locked, retry_after = ratelimit.is_locked(rate_key)
+    if locked:
+        raise HTTPException(429, f"Too many attempts. Try again in {retry_after} seconds.")
+
     email = payload.email.strip().lower()
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(400, "Enter a valid email address.")
@@ -142,9 +182,15 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Exchange credentials for an access token and refresh session."""
+    rate_key = ratelimit.key_for(request.client.host if request.client else "", payload.email)
+    locked, retry_after = ratelimit.is_locked(rate_key)
+    if locked:
+        raise HTTPException(429, f"Too many failed attempts. Try again in {retry_after} seconds.")
+
     user = _find_user(db, payload.email)
     # Same message for unknown user and wrong password: no account enumeration.
     if user is None or not verify_password(payload.password, user.password_hash):
+        ratelimit.record_failure(rate_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
@@ -152,6 +198,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         )
     if not user.is_active:
         raise HTTPException(403, "This account has been deactivated.")
+    ratelimit.record_success(rate_key)
     return _issue_tokens(db, user, request)
 
 
@@ -160,6 +207,23 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     """Exchange a refresh token for a new access token."""
     token_hash = hash_refresh_token(payload.refresh_token)
     session = db.query(AuthSession).filter(AuthSession.token_hash == token_hash).first()
+    if session is None:
+        # Sessions created before the HMAC upgrade were stored with plain
+        # SHA-256; honour those once, then they re-hash on rotation below.
+        legacy_hash = legacy_hash_refresh_token(payload.refresh_token)
+        session = (
+            db.query(AuthSession).filter(AuthSession.token_hash == legacy_hash).first()
+        )
+        if session is not None:
+            session.token_hash = token_hash
+            db.commit()
+
+    if session is not None and session.revoked_at is not None:
+        # Replay: this token was already rotated (or explicitly revoked).
+        # Treat presentation of a rotated token as theft and kill the whole
+        # family so the attacker cannot ride a newer sibling token.
+        _revoke_family(db, session)
+        raise HTTPException(401, "Your session has expired. Please sign in again.")
     if not is_session_active(session):
         raise HTTPException(401, "Your session has expired. Please sign in again.")
 
@@ -176,6 +240,7 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
         AuthSession(
             user_id=user.id,
             token_hash=hash_refresh_token(new_refresh),
+            family_id=session.family_id,
             expires_at=refresh_token_expiry(),
             user_agent=session.user_agent,
             ip_address=session.ip_address,

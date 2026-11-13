@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import hmac
 import secrets
 from typing import Any
 
@@ -108,8 +109,21 @@ def generate_refresh_token() -> str:
 
 
 def hash_refresh_token(token: str) -> str:
-    """Digest a refresh token for storage. SHA-256 is enough: the token is
-    already high-entropy random, not a low-entropy password."""
+    """Digest a refresh token for storage.
+
+    HMAC-SHA256 keyed with ``JWT_SECRET``. SHA-256 alone (the previous scheme)
+    is fine against brute force for a high-entropy token, but the keyed hash
+    means a database leak alone cannot verify stolen tokens without the app
+    secret as well.
+    """
+    return hmac.new(
+        settings.jwt_secret.encode("utf-8"), token.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+
+def legacy_hash_refresh_token(token: str) -> str:
+    """Pre-HMAC scheme (plain SHA-256). Kept only to verify sessions created
+    before the upgrade; those rows re-hash on their next successful refresh."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 

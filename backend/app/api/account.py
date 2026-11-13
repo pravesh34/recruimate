@@ -1,6 +1,13 @@
-"""Account and data-deletion endpoints (privacy controls)."""
+"""Account and data-deletion endpoints (privacy controls).
+
+Every query is scoped to the authenticated caller: deletion removes only the
+caller's rows, never another account's data. In trusted-local mode (auth
+disabled) the caller is the single local candidate, matching the old MVP
+behaviour.
+"""
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -18,36 +25,60 @@ from ..database.models import (
     UsageLog,
     get_db,
 )
-from .deps import iso, require_auth
+from .deps import get_current_user, iso
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
 
 @router.get("")
-def account_info(db: Session = Depends(get_db)):
+def account_info(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     return {
-        "mode": "trusted-local" if not settings.api_token else "token-protected",
+        "mode": "trusted-local" if not settings.auth_enabled else "accounts",
         "storage": "SQLite on this device",
-        "resume_count": db.query(ResumeProfile).count(),
-        "job_count": db.query(JobAnalysis).count(),
-        "interview_count": db.query(InterviewSession).count(),
-        "provider_rows": db.query(ProviderConfiguration).count(),
+        "email": user.email,
+        "resume_count": db.query(ResumeProfile).filter(ResumeProfile.user_id == user.id).count(),
+        "job_count": db.query(JobAnalysis).filter(JobAnalysis.user_id == user.id).count(),
+        "interview_count": db.query(InterviewSession)
+        .filter(InterviewSession.user_id == user.id)
+        .count(),
+        "provider_rows": db.query(ProviderConfiguration)
+        .filter(ProviderConfiguration.user_id == user.id)
+        .count(),
     }
 
 
 @router.delete("/data")
-def delete_all_data(db: Session = Depends(get_db)):
-    """Delete resumes, analyses, interviews, provider credentials and logs."""
-    import datetime as dt
-
-    for resume in db.query(ResumeProfile).all():
+def delete_all_data(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Delete the caller's resumes, analyses, interviews, credentials and logs."""
+    for resume in (
+        db.query(ResumeProfile).filter(ResumeProfile.user_id == user.id).all()
+    ):
         try:
             Path(resume.storage_path).unlink(missing_ok=True)
         except OSError:
             pass
+
+    # ORM-level delete so messages/evaluations cascade along with sessions.
+    for session_row in (
+        db.query(InterviewSession).filter(InterviewSession.user_id == user.id).all()
+    ):
+        db.delete(session_row)
+
+    # LearningTask links through SkillGapReport, so filter via a subquery.
+    user_report_ids = db.query(SkillGapReport.id).filter(
+        SkillGapReport.user_id == user.id
+    )
+    db.query(LearningTask).filter(
+        LearningTask.report_id.in_(user_report_ids)
+    ).delete(synchronize_session=False)
+
     for model in (
-        InterviewSession,
-        LearningTask,
         SkillGapReport,
         CompatibilityReport,
         JobAnalysis,
@@ -55,6 +86,8 @@ def delete_all_data(db: Session = Depends(get_db)):
         ProviderConfiguration,
         UsageLog,
     ):
-        db.query(model).delete(synchronize_session=False)
+        db.query(model).filter(model.user_id == user.id).delete(
+            synchronize_session=False
+        )
     db.commit()
     return {"deleted": True, "deleted_at": dt.datetime.now(dt.timezone.utc).isoformat()}

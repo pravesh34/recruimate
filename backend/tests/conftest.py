@@ -10,6 +10,10 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP / 'test.db'}"
 os.environ["UPLOAD_DIR"] = str(_TMP / "uploads")
 os.environ["DEFAULT_PROVIDER"] = "heuristic"
 os.environ["EMBEDDINGS_BACKEND"] = "hashed"
+# The suite targets trusted-local mode and must not depend on the developer's
+# own .env (which may enable auth/accounts).
+os.environ["AUTH_ENABLED"] = "false"
+os.environ["SEED_DEMO_ACCOUNTS"] = "false"
 for key in (
     "OPENROUTER_API_KEY",
     "GROQ_API_KEY",

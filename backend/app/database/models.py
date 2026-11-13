@@ -63,6 +63,9 @@ class AuthSession(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    # All sessions created by one login/refresh chain share a family id, so a
+    # replayed (already-rotated) refresh token can revoke the whole chain.
+    family_id: Mapped[str] = mapped_column(String(64), default="", index=True)
     user_agent: Mapped[str] = mapped_column(String(512), default="")
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
@@ -274,6 +277,9 @@ def init_db() -> None:
         if not user:
             db.add(User(email="candidate@local", display_name="Candidate"))
             db.commit()
+        from .seed import maybe_seed
+
+        maybe_seed(db)
 
 
 # Columns added after the first release. `create_all` only creates missing
@@ -285,6 +291,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "is_active": "BOOLEAN NOT NULL DEFAULT 1",
         "is_demo": "BOOLEAN NOT NULL DEFAULT 0",
         "last_login_at": "DATETIME",
+    },
+    "auth_sessions": {
+        "family_id": "VARCHAR(64) NOT NULL DEFAULT ''",
     },
 }
 

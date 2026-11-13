@@ -104,8 +104,12 @@ async def require_auth(authorization: str | None = Header(default=None)) -> None
         )
 
 
-def get_gateway(db: Session = Depends(get_db)) -> GatewayManager:
-    return GatewayManager(db)
+def get_gateway(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> GatewayManager:
+    """Gateway bound to the caller's provider configuration and usage logs."""
+    return GatewayManager(db, user_id=user.id)
 
 
 def iso(value: dt.datetime | None) -> str | None:

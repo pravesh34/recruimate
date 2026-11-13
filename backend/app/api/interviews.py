@@ -12,7 +12,6 @@ from ..database.models import (
     InterviewSession,
     JobAnalysis,
     ResumeProfile,
-    ensure_default_user,
     get_db,
 )
 from ..gateway import GatewayManager
@@ -30,15 +29,18 @@ from .schemas import InterviewAnswerRequest, InterviewCreateRequest, InterviewPr
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
 
-def _compat(db: Session, compatibility_id: int | None) -> CompatibilityReport:
+def _compat(
+    db: Session, compatibility_id: int | None, user
+) -> CompatibilityReport:
     record = (
         db.get(CompatibilityReport, compatibility_id)
         if compatibility_id
         else db.query(CompatibilityReport)
+        .filter(CompatibilityReport.user_id == user.id)
         .order_by(CompatibilityReport.created_at.desc(), CompatibilityReport.id.desc())
         .first()
     )
-    if not record:
+    if not record or record.user_id != user.id:
         raise HTTPException(404, "Run a compatibility analysis first.")
     return record
 
@@ -154,8 +156,9 @@ async def interview_prep(
     payload: InterviewPrepRequest,
     db: Session = Depends(get_db),
     gateway: GatewayManager = Depends(get_gateway),
+    user=Depends(get_current_user),
 ):
-    compatibility = _compat(db, payload.compatibility_id)
+    compatibility = _compat(db, payload.compatibility_id, user)
     candidate, job, report = _profiles(db, compatibility)
     bank, provider, warning = await InterviewAgent(gateway).build_question_bank(
         candidate, job, report, limit=payload.limit
@@ -174,8 +177,9 @@ async def create_interview(
     payload: InterviewCreateRequest,
     db: Session = Depends(get_db),
     gateway: GatewayManager = Depends(get_gateway),
+    user=Depends(get_current_user),
 ):
-    compatibility = _compat(db, payload.compatibility_id)
+    compatibility = _compat(db, payload.compatibility_id, user)
     candidate, job, report = _profiles(db, compatibility)
     bank, provider, warning = await InterviewAgent(gateway).build_question_bank(
         candidate, job, report, limit=max(payload.question_limit, 6)
@@ -184,7 +188,6 @@ async def create_interview(
     if not questions:
         raise HTTPException(422, "Could not generate interview questions for this role.")
 
-    user = ensure_default_user(db)
     session = InterviewSession(
         user_id=user.id,
         compatibility_id=compatibility.id,
@@ -231,9 +234,10 @@ async def answer_interview(
     payload: InterviewAnswerRequest,
     db: Session = Depends(get_db),
     gateway: GatewayManager = Depends(get_gateway),
+    user=Depends(get_current_user),
 ):
     session = db.get(InterviewSession, interview_id)
-    if not session:
+    if not session or session.user_id != user.id:
         raise HTTPException(404, "Interview session not found.")
     if session.status != "active":
         raise HTTPException(409, "This interview is already complete.")
@@ -350,9 +354,13 @@ async def answer_interview(
 
 
 @router.post("/{interview_id}/complete")
-def complete_interview(interview_id: int, db: Session = Depends(get_db)):
+def complete_interview(
+    interview_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     session = db.get(InterviewSession, interview_id)
-    if not session:
+    if not session or session.user_id != user.id:
         raise HTTPException(404, "Interview session not found.")
     evaluations = [
         AnswerEvaluation(
@@ -384,9 +392,10 @@ def complete_interview(interview_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("")
-def list_interviews(db: Session = Depends(get_db)):
+def list_interviews(db: Session = Depends(get_db), user=Depends(get_current_user)):
     rows = (
         db.query(InterviewSession)
+        .filter(InterviewSession.user_id == user.id)
         .order_by(InterviewSession.created_at.desc(), InterviewSession.id.desc())
         .limit(30)
         .all()
@@ -406,17 +415,25 @@ def list_interviews(db: Session = Depends(get_db)):
 
 
 @router.get("/{interview_id}")
-def get_interview(interview_id: int, db: Session = Depends(get_db)):
+def get_interview(
+    interview_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     session = db.get(InterviewSession, interview_id)
-    if not session:
+    if not session or session.user_id != user.id:
         raise HTTPException(404, "Interview session not found.")
     return session_to_dict(session)
 
 
 @router.delete("/{interview_id}")
-def delete_interview(interview_id: int, db: Session = Depends(get_db)):
+def delete_interview(
+    interview_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     session = db.get(InterviewSession, interview_id)
-    if not session:
+    if not session or session.user_id != user.id:
         raise HTTPException(404, "Interview session not found.")
     db.delete(session)
     db.commit()
