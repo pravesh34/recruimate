@@ -20,7 +20,7 @@ from ..database.models import (
 )
 from .deps import iso, require_auth
 
-router = APIRouter(prefix="/api/account", tags=["account"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/account", tags=["account"])
 
 
 @router.get("")

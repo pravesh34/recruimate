@@ -7,6 +7,7 @@ import {
   GraduationCap,
   Mic,
   Route,
+  Search,
   Sparkles,
   Target,
   TrendingUp,
@@ -15,6 +16,7 @@ import {
 import api, { apiError } from '../services/api'
 import { fmtDate, scoreTone } from '../services/utils'
 import ScoreCard from '../components/ScoreCard'
+import JobMatchRanking from '../components/JobMatchRanking'
 import { ScoreTrend } from '../components/SkillChart'
 import { EmptyState, ErrorBanner, LoadingBlock, ProgressBar, ScoreRing, StatCard } from '../components/ui'
 
@@ -65,8 +67,8 @@ export default function Dashboard() {
             <div className="mt-5 flex flex-wrap gap-2">
               {hasResume ? (
                 <>
-                  <Link to="/compatibility" className="btn bg-white text-brand-900 hover:bg-brand-50">
-                    <Target className="h-4 w-4" /> Analyse a job
+                  <Link to="/jobs" className="btn bg-white text-brand-900 hover:bg-brand-50">
+                    <Search className="h-4 w-4" /> Find jobs for me
                   </Link>
                   <Link to="/mock-interview" className="btn border border-white/20 bg-white/10 text-white hover:bg-white/15">
                     <Mic className="h-4 w-4" /> Start mock interview
@@ -186,37 +188,14 @@ export default function Dashboard() {
             <div className="card card-pad">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="section-title">Recent job analyses</h3>
-                  <p className="mt-0.5 text-xs text-ink-500">Roles you have compared your profile against.</p>
+                  <h3 className="section-title">Jobs ranked for you</h3>
+                  <p className="mt-0.5 text-xs text-ink-500">Every posting scored against your resume, best fit first.</p>
                 </div>
-                <Link to="/compatibility" className="text-xs font-semibold text-brand-600 hover:text-brand-700">
-                  New analysis →
+                <Link to="/jobs" className="text-xs font-semibold text-brand-600 hover:text-brand-700">
+                  Job hub →
                 </Link>
               </div>
-              {data.recent_jobs?.length ? (
-                <ul className="divide-y divide-ink-100">
-                  {data.recent_jobs.map((job) => (
-                    <li key={job.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
-                        <Briefcase className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-ink-800">{job.title}</p>
-                        <p className="truncate text-xs text-ink-500">
-                          {job.company || 'Company not stated'} · {fmtDate(job.created_at)}
-                        </p>
-                      </div>
-                      <div className="hidden flex-wrap justify-end gap-1 sm:flex">
-                        {(job.required_skills || []).slice(0, 2).map((skill) => (
-                          <span key={skill} className="chip">{skill}</span>
-                        ))}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="py-6 text-center text-sm text-ink-500">No job descriptions analysed yet.</p>
-              )}
+              <JobMatchRanking resumeId={candidate.resume_id} />
             </div>
           </div>
 

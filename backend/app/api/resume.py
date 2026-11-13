@@ -14,15 +14,15 @@ from ..database.models import (
     LearningTask,
     ResumeProfile,
     SkillGapReport,
-    ensure_default_user,
+    User,
     get_db,
 )
 from ..gateway import GatewayManager
 from ..schemas import CandidateProfile
 from ..services.resume_parser import ResumeParseError
-from .deps import get_gateway, iso, require_auth
+from .deps import get_current_user, get_gateway, iso
 
-router = APIRouter(prefix="/api/resume", tags=["resume"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/resume", tags=["resume"])
 
 ALLOWED_EXTENSIONS = {"pdf", "txt", "md", "docx"}
 
@@ -46,6 +46,7 @@ async def upload_resume(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     gateway: GatewayManager = Depends(get_gateway),
+    user: User = Depends(get_current_user),
 ):
     filename = file.filename or "resume.pdf"
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -92,9 +93,10 @@ async def upload_resume(
 
 
 @router.get("/profile")
-def get_profile(db: Session = Depends(get_db)):
+def get_profile(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     resume = (
         db.query(ResumeProfile)
+        .filter(ResumeProfile.user_id == user.id)
         .order_by(ResumeProfile.created_at.desc(), ResumeProfile.id.desc())
         .first()
     )
@@ -104,16 +106,23 @@ def get_profile(db: Session = Depends(get_db)):
 
 
 @router.get("/profile/{resume_id}")
-def get_profile_by_id(resume_id: int, db: Session = Depends(get_db)):
+def get_profile_by_id(resume_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     resume = db.get(ResumeProfile, resume_id)
+    if resume and resume.user_id != user.id:
+        raise HTTPException(404, "Resume not found.")
     if not resume:
         raise HTTPException(404, "Resume not found.")
     return resume_to_dict(resume)
 
 
 @router.get("")
-def list_resumes(db: Session = Depends(get_db)):
-    rows = db.query(ResumeProfile).order_by(ResumeProfile.created_at.desc()).all()
+def list_resumes(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = (
+        db.query(ResumeProfile)
+        .filter(ResumeProfile.user_id == user.id)
+        .order_by(ResumeProfile.created_at.desc())
+        .all()
+    )
     return [
         {
             "id": r.id,
@@ -128,8 +137,10 @@ def list_resumes(db: Session = Depends(get_db)):
 
 
 @router.delete("/{resume_id}")
-def delete_resume(resume_id: int, db: Session = Depends(get_db)):
+def delete_resume(resume_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     resume = db.get(ResumeProfile, resume_id)
+    if resume and resume.user_id != user.id:
+        raise HTTPException(404, "Resume not found.")
     if not resume:
         raise HTTPException(404, "Resume not found.")
     try:

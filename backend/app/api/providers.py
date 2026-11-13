@@ -11,10 +11,10 @@ from ..database.models import UsageLog, get_db
 from ..gateway import ALL_PROVIDERS, GatewayManager
 from ..gateway.fallback import DEFAULT_FALLBACK_ORDER
 from ..services.embedding_service import get_embedding_service
-from .deps import get_gateway, iso, require_auth
+from .deps import get_current_user, get_gateway, iso
 from .schemas import ProviderConfigBody, ProviderTestRequest, RoutingUpdateRequest
 
-router = APIRouter(prefix="/api/providers", tags=["providers"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/providers", tags=["providers"])
 
 AGENTS = [
     {"id": "resume_agent", "label": "Resume Intelligence", "recommended": "Fast structured-output model"},

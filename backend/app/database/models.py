@@ -45,6 +45,31 @@ class User(Base, TimestampMixin):
     display_name: Mapped[str] = mapped_column(String(120), default="Candidate")
     is_local: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # --- Authentication -----------------------------------------------------
+    # Null password_hash means "trusted local" account with no password.
+    password_hash: Mapped[str] = mapped_column(String(255), default="")
+    role: Mapped[str] = mapped_column(String(32), default="candidate")  # candidate|admin
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AuthSession(Base, TimestampMixin):
+    """Refresh-token ledger. Access tokens are stateless JWTs; refresh tokens
+    are opaque, hashed at rest and revocable per row."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    user_agent: Mapped[str] = mapped_column(String(512), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped[User] = relationship("User")
+
 
 class ResumeProfile(Base, TimestampMixin):
     __tablename__ = "resume_profiles"
@@ -217,11 +242,51 @@ def get_db() -> Generator:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _apply_column_migrations()
     with SessionLocal() as db:
         user = db.query(User).first()
         if not user:
             db.add(User(email="candidate@local", display_name="Candidate"))
             db.commit()
+
+
+# Columns added after the first release. `create_all` only creates missing
+# tables, so new columns on existing tables need an explicit ALTER.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "users": {
+        "password_hash": "VARCHAR(255) NOT NULL DEFAULT ''",
+        "role": "VARCHAR(32) NOT NULL DEFAULT 'candidate'",
+        "is_active": "BOOLEAN NOT NULL DEFAULT 1",
+        "is_demo": "BOOLEAN NOT NULL DEFAULT 0",
+        "last_login_at": "DATETIME",
+    },
+}
+
+
+def _apply_column_migrations() -> None:
+    """Add columns introduced after the schema was first created.
+
+    Kept deliberately small: this is a single-user local app with a SQLite
+    file, so a handful of ALTER TABLE statements is cheaper than pulling in a
+    full migration framework.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    for table, columns in _ADDED_COLUMNS.items():
+        if table not in existing_tables:
+            continue
+        present = {col["name"] for col in inspector.get_columns(table)}
+        for name, ddl in columns.items():
+            if name in present:
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+            except Exception:  # pragma: no cover - column may already exist
+                continue
 
 
 def ensure_default_user(db) -> User:

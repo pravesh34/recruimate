@@ -17,7 +17,7 @@ from .compatibility import gap_to_dict, persist_gap
 from .deps import iso, require_auth
 from .schemas import GapGenerateRequest, TaskUpdateRequest
 
-router = APIRouter(prefix="/api/skill-gaps", tags=["skill gaps"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/skill-gaps", tags=["skill gaps"])
 
 
 @router.post("/generate")

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import account, compatibility, dashboard, interviews, jobs, providers, resume, skill_gaps
+from .api import account, auth, compatibility, dashboard, interviews, jobs, providers, resume, skill_gaps
 from .config import BASE_DIR, settings
 from .database.models import init_db
 from .graph.workflow import SupervisorAgent
@@ -68,11 +68,11 @@ def health():
         "version": "1.0.0",
         "embeddings": get_embedding_service().name,
         "engine": SupervisorAgent.__name__,
-        "auth": "token" if settings.api_token else "trusted-local",
+        "auth": "accounts" if settings.auth_enabled else ("token" if settings.api_token else "trusted-local"),
     }
 
 
-for module in (resume, jobs, compatibility, skill_gaps, interviews, providers, dashboard, account):
+for module in (auth, resume, jobs, compatibility, skill_gaps, interviews, providers, dashboard, account):
     app.include_router(module.router)
 
 

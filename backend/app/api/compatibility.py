@@ -14,6 +14,7 @@ from ..database.models import (
     LearningTask,
     ResumeProfile,
     SkillGapReport,
+    User,
     ensure_default_user,
     get_db,
 )
@@ -21,10 +22,10 @@ from ..gateway import GatewayManager
 from ..graph.workflow import SupervisorAgent
 from ..schemas import CandidateProfile, JobProfile
 from ..services.roadmap_service import generate_roadmap
-from .deps import get_gateway, iso, require_auth
-from .schemas import AnalysisRunRequest, CompatibilityAnalyzeRequest
+from .deps import get_current_user, get_gateway, iso
+from .schemas import AnalysisRunRequest, CompatibilityAnalyzeRequest, JobMatch
 
-router = APIRouter(prefix="/api", tags=["compatibility"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api", tags=["compatibility"])
 
 
 def persist_gap(db: Session, user_id: int, compatibility_id: int, gap) -> SkillGapReport:
@@ -134,11 +135,17 @@ async def _resolve_job(
     raise HTTPException(400, "Analyse a job description first or provide one.")
 
 
-def _resolve_resume(db: Session, resume_id: int | None) -> ResumeProfile:
+def _resolve_resume(db: Session, resume_id: int | None, user_id: int) -> ResumeProfile:
     resume = (
-        db.get(ResumeProfile, resume_id)
+        db.query(ResumeProfile)
+        .filter(ResumeProfile.user_id == user_id)
+        .filter(ResumeProfile.id == resume_id)
+        .first()
         if resume_id
-        else db.query(ResumeProfile).order_by(ResumeProfile.created_at.desc(), ResumeProfile.id.desc()).first()
+        else db.query(ResumeProfile)
+        .filter(ResumeProfile.user_id == user_id)
+        .order_by(ResumeProfile.created_at.desc(), ResumeProfile.id.desc())
+        .first()
     )
     if not resume:
         raise HTTPException(404, "Upload a resume first.")
@@ -150,8 +157,9 @@ async def analyze_compatibility(
     payload: CompatibilityAnalyzeRequest,
     db: Session = Depends(get_db),
     gateway: GatewayManager = Depends(get_gateway),
+    user: User = Depends(get_current_user),
 ):
-    resume = _resolve_resume(db, payload.resume_id)
+    resume = _resolve_resume(db, payload.resume_id, user.id)
     job = await _resolve_job(db, gateway, payload.job_id, payload.job_description)
     candidate = CandidateProfile.model_validate(resume.profile or {})
     job_profile = JobProfile.model_validate(job.profile or {})
@@ -188,9 +196,10 @@ async def run_full_analysis(
     payload: AnalysisRunRequest,
     db: Session = Depends(get_db),
     gateway: GatewayManager = Depends(get_gateway),
+    user: User = Depends(get_current_user),
 ):
     """Run the full LangGraph supervisor: resume → job → compatibility → gaps → interview prep."""
-    resume = _resolve_resume(db, payload.resume_id)
+    resume = _resolve_resume(db, payload.resume_id, user.id)
     job = await _resolve_job(db, gateway, payload.job_id, payload.job_description)
     supervisor = SupervisorAgent(gateway)
     state = await supervisor.run(resume.raw_text or "", job.raw_text or "")
@@ -234,9 +243,10 @@ async def run_full_analysis(
 
 
 @router.get("/compatibility")
-def list_compatibility(db: Session = Depends(get_db)):
+def list_compatibility(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     rows = (
         db.query(CompatibilityReport)
+        .filter(CompatibilityReport.user_id == user.id)
         .order_by(CompatibilityReport.created_at.desc(), CompatibilityReport.id.desc())
         .limit(50)
         .all()
@@ -256,8 +266,10 @@ def list_compatibility(db: Session = Depends(get_db)):
 
 
 @router.get("/compatibility/{report_id}")
-def get_compatibility(report_id: int, db: Session = Depends(get_db)):
+def get_compatibility(report_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     record = db.get(CompatibilityReport, report_id)
+    if record and record.user_id != user.id:
+        raise HTTPException(404, "Compatibility report not found.")
     if not record:
         raise HTTPException(404, "Compatibility report not found.")
     return compatibility_to_dict(record, db)

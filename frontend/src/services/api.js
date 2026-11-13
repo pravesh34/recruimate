@@ -9,6 +9,66 @@ const client = axios.create({
 const token = import.meta.env.VITE_API_TOKEN
 if (token) client.defaults.headers.common.Authorization = `Bearer ${token}`
 
+// --- Token store -----------------------------------------------------------
+const ACCESS_KEY = 'recruimate.access_token'
+const REFRESH_KEY = 'recruimate.refresh_token'
+
+export const tokens = {
+  get access() {
+    return localStorage.getItem(ACCESS_KEY) || ''
+  },
+  get refresh() {
+    return localStorage.getItem(REFRESH_KEY) || ''
+  },
+  set({ access_token, refresh_token }) {
+    if (access_token) localStorage.setItem(ACCESS_KEY, access_token)
+    if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token)
+  },
+  clear() {
+    localStorage.removeItem(ACCESS_KEY)
+    localStorage.removeItem(REFRESH_KEY)
+  },
+}
+
+// Attach the bearer token to every request.
+client.interceptors.request.use((config) => {
+  const access = tokens.access
+  if (access) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${access}`
+  }
+  return config
+})
+
+// On 401, try one silent refresh before giving up.
+let refreshing = null
+client.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config
+    if (error?.response?.status !== 401 || original?._retried || !tokens.refresh) {
+      return Promise.reject(error)
+    }
+    original._retried = true
+    try {
+      refreshing =
+        refreshing ||
+        client.post('/auth/refresh', { refresh_token: tokens.refresh }).then((r) => {
+          refreshing = null
+          tokens.set(r.data)
+          return r.data.access_token
+        })
+      const access = await refreshing
+      original.headers = original.headers || {}
+      original.headers.Authorization = `Bearer ${access}`
+      return client(original)
+    } catch (e) {
+      tokens.clear()
+      return Promise.reject(e)
+    }
+  },
+)
+
 export function apiError(error) {
   const detail = error?.response?.data?.detail
   if (Array.isArray(detail)) {
@@ -20,6 +80,22 @@ export function apiError(error) {
 
 export const api = {
   health: () => client.get('/health').then((r) => r.data),
+
+  // Auth
+  authStatus: () => client.get('/auth/status').then((r) => r.data),
+  register: (payload) => client.post('/auth/register', payload).then((r) => r.data),
+  login: (payload) => client.post('/auth/login', payload).then((r) => r.data),
+  logout: () => {
+    const refresh = tokens.refresh
+    tokens.clear()
+    return refresh
+      ? client.post('/auth/logout', { refresh_token: refresh }).catch(() => {})
+      : Promise.resolve()
+  },
+  me: () => client.get('/auth/me').then((r) => r.data),
+  listSessions: () => client.get('/auth/sessions').then((r) => r.data),
+  revokeSession: (id) => client.post(`/auth/sessions/${id}/revoke`).then((r) => r.data),
+  changePassword: (payload) => client.post('/auth/change-password', payload).then((r) => r.data),
 
   // Resume
   uploadResume: (file, onProgress) => {
@@ -44,6 +120,12 @@ export const api = {
   listJobs: () => client.get('/jobs').then((r) => r.data),
   getJob: (id) => client.get(`/jobs/${id}`).then((r) => r.data),
   deleteJob: (id) => client.delete(`/jobs/${id}`).then((r) => r.data),
+
+  // Job search: rank every posting by compatibility with a resume
+  matchResumeToJobs: (resumeId) =>
+    client
+      .get('/jobs/match-resume', { params: resumeId ? { resume_id: resumeId } : {} })
+      .then((r) => r.data),
 
   // Compatibility / analysis
   analyzeCompatibility: (payload) => client.post('/compatibility/analyze', payload).then((r) => r.data),

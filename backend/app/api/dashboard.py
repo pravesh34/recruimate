@@ -15,19 +15,22 @@ from ..database.models import (
     SkillGapReport,
     UsageLog,
     get_db,
-)
-from .deps import iso, require_auth
+    User,
 
-router = APIRouter(prefix="/api", tags=["dashboard"], dependencies=[Depends(require_auth)])
+)
+from .deps import get_current_user, iso, require_auth
+
+router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
 @router.get("/dashboard")
-def dashboard(db: Session = Depends(get_db)):
-    resumes = db.query(ResumeProfile).order_by(ResumeProfile.created_at.desc()).all()
+def dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    resumes = db.query(ResumeProfile).filter(ResumeProfile.user_id == user.id).order_by(ResumeProfile.created_at.desc()).all()
     latest_resume = resumes[0] if resumes else None
-    jobs = db.query(JobAnalysis).order_by(JobAnalysis.created_at.desc(), JobAnalysis.id.desc()).limit(6).all()
+    jobs = db.query(JobAnalysis).filter(JobAnalysis.user_id == user.id).order_by(JobAnalysis.created_at.desc(), JobAnalysis.id.desc()).limit(6).all()
     reports = (
         db.query(CompatibilityReport)
+        .filter(CompatibilityReport.user_id == user.id)
         .order_by(CompatibilityReport.created_at.desc(), CompatibilityReport.id.desc())
         .all()
     )
@@ -35,16 +38,18 @@ def dashboard(db: Session = Depends(get_db)):
     avg_score = round(sum(r.overall_score for r in reports) / len(reports), 1) if reports else 0.0
     gap = (
         db.query(SkillGapReport)
+        .filter(SkillGapReport.user_id == user.id)
         .filter_by(compatibility_id=latest_report.id)
         .order_by(SkillGapReport.id.desc())
         .first()
         if latest_report
-        else db.query(SkillGapReport).order_by(SkillGapReport.id.desc()).first()
+        else db.query(SkillGapReport).filter(SkillGapReport.user_id == user.id).order_by(SkillGapReport.id.desc()).first()
     )
     tasks = gap.tasks if gap else []
     completed_tasks = sum(1 for t in tasks if t.completed)
     sessions = (
         db.query(InterviewSession)
+        .filter(InterviewSession.user_id == user.id)
         .order_by(InterviewSession.created_at.desc(), InterviewSession.id.desc())
         .all()
     )
@@ -81,7 +86,7 @@ def dashboard(db: Session = Depends(get_db)):
         },
         "stats": {
             "resume_count": len(resumes),
-            "job_count": db.query(JobAnalysis).count(),
+            "job_count": db.query(JobAnalysis).filter(JobAnalysis.user_id == user.id).count(),
             "analysis_count": len(reports),
             "average_compatibility": avg_score,
             "latest_compatibility": latest_report.overall_score if latest_report else 0,
@@ -172,19 +177,21 @@ def dashboard(db: Session = Depends(get_db)):
 
 
 @router.get("/analytics")
-def analytics(db: Session = Depends(get_db)):
+def analytics(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     reports = (
         db.query(CompatibilityReport)
+        .filter(CompatibilityReport.user_id == user.id)
         .order_by(CompatibilityReport.created_at.asc(), CompatibilityReport.id.asc())
         .all()
     )
     sessions = (
         db.query(InterviewSession)
+        .filter(InterviewSession.user_id == user.id)
         .filter(InterviewSession.status == "completed")
         .order_by(InterviewSession.created_at.asc())
         .all()
     )
-    gap_records = db.query(SkillGapReport).order_by(SkillGapReport.id.desc()).all()
+    gap_records = db.query(SkillGapReport).filter(SkillGapReport.user_id == user.id).order_by(SkillGapReport.id.desc()).all()
     tasks = db.query(LearningTask).all()
 
     preparation_by_skill = []

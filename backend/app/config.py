@@ -25,6 +25,18 @@ class Settings(BaseSettings):
     # Optional bearer token. When empty the app runs in trusted local mode.
     api_token: str = ""
 
+    # --- Authentication ------------------------------------------------------
+    # Set AUTH_ENABLED=true to turn on the account system (register/login/JWT).
+    # While false the app stays in trusted-local mode for backwards compatibility.
+    auth_enabled: bool = False
+    jwt_secret: str = "change-me-local-dev-secret"
+    jwt_algorithm: str = "HS256"
+    access_token_minutes: int = 60
+    refresh_token_days: int = 30
+    # When true, demo accounts (candidate1..5) are created on first boot.
+    seed_demo_accounts: bool = True
+    demo_account_password: str = "RecruiMate@123"
+
     # Default provider ("heuristic" works fully offline; configure a real one in Settings)
     default_provider: str = "heuristic"
     request_timeout: float = 60.0

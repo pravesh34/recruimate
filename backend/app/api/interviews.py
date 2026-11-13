@@ -24,10 +24,10 @@ from ..schemas import (
     JobProfile,
 )
 from ..services.interview_service import build_final_report
-from .deps import get_gateway, iso, require_auth
+from .deps import get_current_user, get_gateway, iso
 from .schemas import InterviewAnswerRequest, InterviewCreateRequest, InterviewPrepRequest
 
-router = APIRouter(prefix="/api/interviews", tags=["interviews"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
 
 def _compat(db: Session, compatibility_id: int | None) -> CompatibilityReport:

@@ -52,6 +52,16 @@ class ProviderTestRequest(BaseModel):
     model: str | None = None
 
 
+class JobMatch(BaseModel):
+    job_id: int
+    title: str
+    company: str
+    location: str
+    remote: bool
+    compatibility_score: float
+    match_reasons: dict = Field(default_factory=dict)
+
+
 class RoutingUpdateRequest(BaseModel):
     default_provider: str | None = None
     agent_overrides: dict[str, dict[str, str]] | None = None

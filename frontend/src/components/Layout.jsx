@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
   BrainCircuit,
   ChevronRight,
   FileText,
   LayoutDashboard,
+  LogOut,
   Menu,
   MessagesSquare,
   Mic,
   Route,
+  Search,
   Settings,
   Sparkles,
   Target,
   X,
 } from 'lucide-react'
 import { classNames } from '../services/utils'
+import { useAuth } from '../services/auth'
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/jobs', label: 'Job search', icon: Search },
   { to: '/resume', label: 'Resume analysis', icon: FileText },
   { to: '/compatibility', label: 'Job compatibility', icon: Target },
   { to: '/skill-gap', label: 'Skill gap & roadmap', icon: Route },
@@ -30,6 +34,7 @@ const NAV = [
 
 const TITLES = {
   '/': { title: 'Dashboard', subtitle: 'Your preparation at a glance' },
+  '/jobs': { title: 'Job search', subtitle: 'Every posting ranked against your resume' },
   '/resume': { title: 'Resume analysis', subtitle: 'Extract, review and strengthen your resume' },
   '/compatibility': { title: 'Job compatibility', subtitle: 'See how your evidence maps to the role' },
   '/skill-gap': { title: 'Skill gap & roadmap', subtitle: 'Turn gaps into a focused learning plan' },
@@ -56,6 +61,24 @@ function Logo() {
 }
 
 function Sidebar({ onNavigate }) {
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  const displayName = user?.display_name || 'Your workspace'
+  const initials =
+    displayName
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase() || 'RM'
+
+  async function handleSignOut() {
+    await logout()
+    navigate('/login', { replace: true })
+  }
+
   return (
     <div className="flex h-full flex-col bg-gradient-to-b from-brand-950 via-brand-900 to-[#111a3d]">
       <div className="flex items-center justify-between px-5 pb-6 pt-6">
@@ -111,12 +134,22 @@ function Sidebar({ onNavigate }) {
         </NavLink>
         <div className="mt-3 flex items-center gap-2 px-1">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500/30 text-xs font-bold text-white">
-            PS
+            {initials}
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-xs font-semibold text-white">Your workspace</p>
-            <p className="text-[10px] text-brand-200/60">Local & private</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold text-white">{displayName}</p>
+            <p className="truncate text-[10px] text-brand-200/60">{user?.email || 'Local & private'}</p>
           </div>
+          {user && (
+            <button
+              type="button"
+              onClick={handleSignOut}
+              title="Sign out"
+              className="rounded-lg p-1.5 text-brand-100/70 transition hover:bg-white/10 hover:text-white"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>
