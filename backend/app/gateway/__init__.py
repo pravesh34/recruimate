@@ -12,6 +12,7 @@ from .gateway_manager import (
     ALL_PROVIDERS,
     PROVIDER_LABELS,
     AllProvidersFailed,
+    DailyBudgetExceeded,
     GatewayManager,
     validate_base_url,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "ProviderNotConfigured",
     "GatewayManager",
     "AllProvidersFailed",
+    "DailyBudgetExceeded",
     "ALL_PROVIDERS",
     "PROVIDER_LABELS",
     "validate_base_url",

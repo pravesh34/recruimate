@@ -39,6 +39,10 @@ class Settings(BaseSettings):
 
     # Default provider ("heuristic" works fully offline; configure a real one in Settings)
     default_provider: str = "heuristic"
+    # Max successful LLM calls per user per UTC day (0 = unlimited). When the cap
+    # is reached the gateway degrades gracefully to heuristic mode for the rest
+    # of the day instead of erroring or draining a free-tier quota.
+    ai_daily_request_limit: int = 200
     request_timeout: float = 60.0
     max_retries: int = 2
     # Never silently move to a paid model when a free one fails.

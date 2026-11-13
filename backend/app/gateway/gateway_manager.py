@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import ipaddress
 import time
 from dataclasses import replace
@@ -9,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -71,6 +73,18 @@ class AllProvidersFailed(ProviderError):
     def __init__(self, attempts: list[str]):
         super().__init__("All configured providers failed: " + " | ".join(attempts), retryable=False)
         self.attempts = attempts
+
+
+class DailyBudgetExceeded(ProviderError):
+    """Raised instead of making LLM calls once the user's daily cap is hit."""
+
+    def __init__(self, provider: str, limit: int):
+        super().__init__(
+            f"Daily AI request budget of {limit} reached; falling back to heuristics",
+            retryable=False,
+        )
+        self.provider = provider
+        self.limit = limit
 
 
 def validate_base_url(url: str, provider: str) -> str:
@@ -280,6 +294,28 @@ class GatewayManager:
         provider, cfg = self.resolve(agent)
         return provider != "heuristic" and cfg.enabled and cfg.configured
 
+    def _budget_exhausted(self) -> bool:
+        """True when the caller already made the day's allowed LLM requests.
+
+        Counts successful calls (``UsageLog.status == "ok"``) since midnight UTC
+        for this user. ``ai_daily_request_limit = 0`` disables the cap.
+        """
+        limit = settings.ai_daily_request_limit
+        if limit <= 0:
+            return False
+        day_start = dt.datetime.now(dt.timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        used = (
+            self.db.query(func.count(UsageLog.id))
+            .filter(UsageLog.user_id == self.user_id)
+            .filter(UsageLog.status == "ok")
+            .filter(UsageLog.created_at >= day_start)
+            .scalar()
+            or 0
+        )
+        return used >= limit
+
     # -------------------------------------------------------------- providers
     def provider_instance(self, name: str, cfg: ProviderConfig | None = None) -> BaseProvider:
         cfg = cfg or self.configs.get(name)
@@ -310,6 +346,15 @@ class GatewayManager:
             request = request.model_copy(update={"model": cfg.model})
         if primary == "heuristic" or not cfg.enabled or not cfg.configured:
             raise ProviderNotConfigured(primary)
+        if self._budget_exhausted():
+            self._log(
+                provider=primary,
+                model=cfg.model,
+                agent=agent,
+                status="budget",
+                error=f"Daily AI budget of {settings.ai_daily_request_limit} reached",
+            )
+            raise DailyBudgetExceeded(primary, settings.ai_daily_request_limit)
 
         candidates = [cfg] + fallback_candidates(
             self.configs, primary, allow_paid=settings.allow_paid_fallback
