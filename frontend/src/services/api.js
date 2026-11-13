@@ -137,6 +137,35 @@ export const api = {
   generateGapForJob: (payload) => client.post('/skill-gaps/generate-for-job', payload).then((r) => r.data),
   createInterviewForJob: (payload) => client.post('/interviews/for-job', payload).then((r) => r.data),
 
+  // Application pipeline
+  listPipeline: (status) =>
+    client.get('/pipeline', { params: status ? { status } : {} }).then((r) => r.data),
+  trackJob: (payload) => client.post('/pipeline', payload).then((r) => r.data),
+  updatePipelineEntry: (id, payload) =>
+    client.patch(`/pipeline/${id}`, payload).then((r) => r.data),
+  deletePipelineEntry: (id) => client.delete(`/pipeline/${id}`).then((r) => r.data),
+
+  // Cross-pool insights + resume tailoring
+  poolInsights: (resumeId) =>
+    client
+      .get('/jobs/pool/insights', { params: resumeId ? { resume_id: resumeId } : {} })
+      .then((r) => r.data),
+  generateGapForPool: (payload) =>
+    client.post('/skill-gaps/generate-for-pool', payload).then((r) => r.data),
+  tailorForJob: (jobId, resumeId) =>
+    client
+      .post('/jobs/tailor', null, {
+        params: { job_id: jobId, ...(resumeId ? { resume_id: resumeId } : {}) },
+      })
+      .then((r) => r.data),
+  tailorExport: (jobId, format, resumeId) =>
+    client
+      .get('/jobs/tailor/export', {
+        params: { job_id: jobId, format, ...(resumeId ? { resume_id: resumeId } : {}) },
+        responseType: 'blob',
+      })
+      .then((r) => r.data),
+
   // Compatibility / analysis
   analyzeCompatibility: (payload) => client.post('/compatibility/analyze', payload).then((r) => r.data),
   runAnalysis: (payload) => client.post('/analysis/run', payload).then((r) => r.data),

@@ -198,6 +198,28 @@ class InterviewMessage(Base, TimestampMixin):
     session: Mapped[InterviewSession] = relationship(back_populates="messages")
 
 
+class PipelineEntry(Base, TimestampMixin):
+    """Application-pipeline entry: a target job the candidate is pursuing.
+
+    Snapshots the posting's identity so history survives pool deletions;
+    ``job_posting_id`` is a soft link (no DB cascade on purpose).
+    """
+
+    __tablename__ = "pipeline_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    job_posting_id: Mapped[int | None] = mapped_column(ForeignKey("job_postings.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    company: Mapped[str] = mapped_column(String(255), default="")
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    source: Mapped[str] = mapped_column(String(64), default="")
+    # new|shortlisted|applied|interview|offer|rejected|closed
+    status: Mapped[str] = mapped_column(String(32), default="new", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    next_action_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class InterviewEvaluation(Base, TimestampMixin):
     __tablename__ = "interview_evaluations"
 

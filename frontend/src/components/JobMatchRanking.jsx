@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowUpRight,
+  BookmarkPlus,
   Briefcase,
   CheckCircle2,
   ClipboardList,
+  FileText,
   Loader2,
   MapPin,
   Mic,
@@ -41,6 +43,7 @@ function MatchCard({ match, resumeId }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [tracked, setTracked] = useState(false)
   const navigate = useNavigate()
 
   async function makePlan() {
@@ -66,6 +69,19 @@ function MatchCard({ match, resumeId }) {
         question_limit: 8,
       })
       navigate(`/mock-interview/${session.id}`)
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function track() {
+    setBusy('track')
+    setError('')
+    try {
+      await api.trackJob({ job_id: match.job_id })
+      setTracked(true)
     } catch (e) {
       setError(apiError(e))
     } finally {
@@ -189,38 +205,58 @@ function MatchCard({ match, resumeId }) {
               Apply <ArrowUpRight className="h-3 w-3" />
             </a>
           )}
-          <div className="mt-1 flex flex-col items-end gap-1">
-            <button
-              type="button"
-              onClick={makePlan}
-              disabled={Boolean(busy)}
-              className="btn-secondary btn-sm inline-flex items-center gap-1"
-              title="Build a plan of approach for this role"
-            >
-              {busy === 'plan' ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <ClipboardList className="h-3 w-3" />
-              )}
-              Plan
-            </button>
-            <button
-              type="button"
-              onClick={startInterview}
-              disabled={Boolean(busy)}
-              className="btn-primary btn-sm inline-flex items-center gap-1"
-              title="Practise a scored mock interview for this role"
-            >
-              {busy === 'interview' ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Mic className="h-3 w-3" />
-              )}
-              Interview
-            </button>
-          </div>
         </div>
       </div>
+
+      <div className="mt-2 flex flex-wrap gap-1.5 pl-9">
+        <button
+          type="button"
+          onClick={makePlan}
+          disabled={Boolean(busy)}
+          className="btn-secondary btn-sm inline-flex items-center gap-1"
+          title="Build a plan of approach for this role"
+        >
+          {busy === 'plan' ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardList className="h-3 w-3" />}
+          Plan
+        </button>
+        <button
+          type="button"
+          onClick={startInterview}
+          disabled={Boolean(busy)}
+          className="btn-primary btn-sm inline-flex items-center gap-1"
+          title="Practise a scored mock interview for this role"
+        >
+          {busy === 'interview' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mic className="h-3 w-3" />}
+          Interview
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate(`/tailor/${match.job_id}`)}
+          disabled={Boolean(busy)}
+          className="btn-secondary btn-sm inline-flex items-center gap-1"
+          title="Tailor your resume and a cover letter for this role"
+        >
+          <FileText className="h-3 w-3" />
+          Tailor
+        </button>
+        <button
+          type="button"
+          onClick={track}
+          disabled={Boolean(busy) || tracked}
+          className="btn-secondary btn-sm inline-flex items-center gap-1"
+          title="Add this job to your application pipeline"
+        >
+          {busy === 'track' ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : tracked ? (
+            <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+          ) : (
+            <BookmarkPlus className="h-3 w-3" />
+          )}
+          {tracked ? 'Tracking ✓' : 'Track'}
+        </button>
+      </div>
+
       {error && (
         <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
       )}
