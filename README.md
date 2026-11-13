@@ -18,11 +18,17 @@ interview. It is **not** a recruiter ATS and never submits applications or conta
 | Skill gap | Prioritised roadmap with topics, practice projects, effort estimates and task tracking |
 | Interview prep | Technical, project, HR, behavioural and problem-solving questions with expected points |
 | Mock interview | One question at a time, follow-ups, six-dimension scoring and a final report |
+| Target job pool | Import real postings from Remotive/RemoteOK into a **private per-candidate pool**; ranked against your resume |
+| Plan of approach | Compatibility + prioritised roadmap for one pool job, or one combined plan across the whole pool |
+| Resume tailoring | Real resume bullets reordered to prove a job's requirements + cover-letter draft, exportable as print-ready HTML/Markdown |
+| Application pipeline | Track jobs new → applied → offer with notes and follow-up dates |
+| Cross-pool insights | "Learn one skill, unlock N more jobs" — gaps aggregated across every target job |
 | Analytics | Compatibility trend, interview trend, repeated gaps, study progress |
 | Settings | Provider/model selection, per-agent routing, health checks, usage logs, data deletion |
 
 **Key differentiator:** it does not stop at “you are a 75% match”. It shows the evidence behind the number,
-turns gaps into tasks, and measures whether your interviews improve.
+turns gaps into tasks, and measures whether your interviews improve. The whole flow can run on **real,
+live job postings** imported straight from public job boards.
 
 ## Architecture
 
@@ -121,13 +127,31 @@ values act as defaults; values saved in the UI take precedence.
 | Ollama | `http://127.0.0.1:11434/v1` | none |
 | Custom | any approved OpenAI-compatible host | optional |
 
-Recommended first integration: **OpenRouter**.
+Recommended first integration: **OpenRouter** (one key, many free models) or **Groq** (fast free tier).
 
 ```env
+DEFAULT_PROVIDER=groq
+GROQ_API_KEY=your_key
+GROQ_MODEL=openai/gpt-oss-120b
+
+# Fallback provider (used automatically when the primary fails)
 OPENROUTER_API_KEY=your_key
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
 ```
+
+Model slugs change on these platforms (e.g. Groq retired `llama-3.3-70b-versatile`). Check the current
+list on the provider console or via `GET /api/providers/models?provider=groq`.
+
+### Daily request budget
+
+Free tiers are finite, so the gateway enforces a per-user, per-UTC-day cap on successful LLM calls:
+
+```env
+AI_DAILY_REQUEST_LIMIT=200   # 0 disables the cap
+```
+
+When the cap is hit the call is logged with `status=budget` and agents gracefully fall back to
+heuristic mode for the rest of the day — nothing errors, nothing drains the quota.
 
 Free variants are rate limited (OpenRouter documents limits such as 20 req/min and 50 req/day; check current
 terms). RecruiMate does not silently fall back to a paid model: set `ALLOW_PAID_FALLBACK=false` (default) and mark
@@ -173,15 +197,27 @@ analysis ignore routing because they are deterministic.
 | GET | `/api/resume/profile` | Latest candidate profile |
 | DELETE | `/api/resume/{id}` | Delete resume + linked reports |
 | POST | `/api/jobs/analyze` | Analyse pasted text or a public URL |
+| POST | `/api/jobs/pool/import` | Import real postings from Remotive/RemoteOK into your pool |
+| GET | `/api/jobs/pool` | List your target job pool |
+| POST | `/api/jobs/pool/add` | Add one job from a URL or pasted description |
+| DELETE | `/api/jobs/pool/{id}` | Remove a pool job (own rows only) |
+| GET | `/api/jobs/match-resume` | Rank the pool against a resume (`include_shared` adds demo postings) |
+| GET | `/api/jobs/pool/insights` | Skill-unlock ranking + pool fit aggregate |
+| POST | `/api/jobs/tailor` | Reorder real resume bullets for one pool job + cover-letter draft |
+| GET | `/api/jobs/tailor/export` | Download the tailored application (HTML/Markdown) |
 | POST | `/api/compatibility/analyze` | Deterministic compatibility + optional roadmap |
 | GET | `/api/compatibility/{id}` | Retrieve a report |
 | POST | `/api/analysis/run` | Full supervisor workflow |
 | POST | `/api/skill-gaps/generate` | Generate roadmap from a report |
+| POST | `/api/skill-gaps/generate-for-job` | Plan of approach for one pool job |
+| POST | `/api/skill-gaps/generate-for-pool` | One combined roadmap across the whole pool |
 | PATCH | `/api/skill-gaps/tasks/{id}` | Track learning progress |
 | POST | `/api/interviews/prep` | Generate a question bank |
 | POST | `/api/interviews` | Start a mock session |
+| POST | `/api/interviews/for-job` | Mock interview against a pool job |
 | POST | `/api/interviews/{id}/answer` | Submit one answer |
 | POST | `/api/interviews/{id}/complete` | Finish early and report |
+| GET/POST/PATCH/DELETE | `/api/pipeline*` | Application pipeline: stages, notes, follow-ups |
 | GET | `/api/dashboard` | Dashboard aggregates |
 | GET | `/api/analytics` | Trends, weak skills, preparation |
 | GET/PUT | `/api/providers*` | Configuration, health, models, routing, usage |
@@ -200,9 +236,19 @@ pytest -q
 
 Coverage includes resume/job parsing, skill aliases, deterministic scoring, roadmap generation, answer
 evaluation, all gateway adapters with a fake transport, OpenCode session lifecycle, provider failures, API
-end-to-end flows, database persistence and privacy deletion.
+end-to-end flows, database persistence, privacy deletion, the daily AI budget, job-board import (faked
+transport), the target job pool and its per-candidate isolation, pipeline tracking, cross-pool insights and
+resume tailoring.
 
 The test suite sets `EMBEDDINGS_BACKEND=hashed` and `DEFAULT_PROVIDER=heuristic`, so it needs no network or keys.
+GitHub Actions runs the backend suite and the frontend production build on every push and pull request
+(`.github/workflows/tests.yml`).
+
+## PWA
+
+The frontend ships a web manifest and generated icons (`scripts/make_icons.py`, stdlib-only). Open the app in
+Android Chrome at `http://127.0.0.1:5173` (a secure context) and use **Add to Home screen** to install it as a
+standalone app — no Play Store, no build tools needed on the phone.
 
 ## Security & privacy
 
@@ -228,7 +274,7 @@ recruimate/
 │   │   ├── gateway/         # adapters, manager, fallback policy
 │   │   ├── graph/           # LangGraph state, nodes, supervisor
 │   │   ├── services/        # parsing, embeddings, scoring, roadmap, interview
-│   │   ├── api/             # resume, jobs, compatibility, gaps, interviews, providers, dashboard
+│   │   ├── api/             # resume, jobs, compatibility, gaps, interviews, pipeline, providers, dashboard
 │   │   ├── database/        # SQLAlchemy models
 │   │   ├── prompts/         # provider-agnostic prompts
 │   │   └── utils/           # SSRF-safe URL fetching
