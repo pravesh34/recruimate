@@ -15,7 +15,6 @@ from ..database.models import (
     ResumeProfile,
     SkillGapReport,
     User,
-    ensure_default_user,
     get_db,
 )
 from ..gateway import GatewayManager
@@ -107,7 +106,7 @@ def compatibility_to_dict(record: CompatibilityReport, db: Session) -> dict:
 
 
 async def _resolve_job(
-    db: Session, gateway: GatewayManager, job_id: int | None, description: str
+    db: Session, gateway: GatewayManager, job_id: int | None, description: str, user: User
 ) -> JobAnalysis:
     if job_id:
         job = db.get(JobAnalysis, job_id)
@@ -116,7 +115,6 @@ async def _resolve_job(
         return job
     if description.strip():
         profile, provider, warning = await JobAgent(gateway).analyze(description.strip()[:40000])
-        user = ensure_default_user(db)
         job = JobAnalysis(
             user_id=user.id,
             title=profile.job_title[:255],
@@ -160,12 +158,11 @@ async def analyze_compatibility(
     user: User = Depends(get_current_user),
 ):
     resume = _resolve_resume(db, payload.resume_id, user.id)
-    job = await _resolve_job(db, gateway, payload.job_id, payload.job_description)
+    job = await _resolve_job(db, gateway, payload.job_id, payload.job_description, user)
     candidate = CandidateProfile.model_validate(resume.profile or {})
     job_profile = JobProfile.model_validate(job.profile or {})
     report = CompatibilityAgent().analyze(candidate, job_profile, resume.raw_text or "")
 
-    user = ensure_default_user(db)
     record = CompatibilityReport(
         user_id=user.id,
         resume_id=resume.id,
@@ -200,13 +197,12 @@ async def run_full_analysis(
 ):
     """Run the full LangGraph supervisor: resume → job → compatibility → gaps → interview prep."""
     resume = _resolve_resume(db, payload.resume_id, user.id)
-    job = await _resolve_job(db, gateway, payload.job_id, payload.job_description)
+    job = await _resolve_job(db, gateway, payload.job_id, payload.job_description, user)
     supervisor = SupervisorAgent(gateway)
     state = await supervisor.run(resume.raw_text or "", job.raw_text or "")
     if not state.get("candidate") or not state.get("compatibility") or not state.get("gaps"):
         raise HTTPException(500, "The analysis workflow did not complete. Check provider settings and try again.")
 
-    user = ensure_default_user(db)
     # Refresh the stored profiles with the supervisor output (keeps them consistent).
     resume.profile = state["candidate"].model_dump()
     resume.provider = state.get("providers", {}).get("resume_agent", resume.provider)
