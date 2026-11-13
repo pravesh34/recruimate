@@ -53,12 +53,37 @@ class PoolAddRequest(BaseModel):
     location: str = ""
 
 
+class PoolGapGenerateRequest(BaseModel):
+    """One combined roadmap across the whole target job pool."""
+
+    resume_id: int | None = None
+    max_skills: int = Field(default=6, ge=3, le=8)
+
+
 class InterviewForJobRequest(BaseModel):
     """Start a mock interview against a target-pool posting."""
 
     resume_id: int | None = None
     job_id: int
     question_limit: int = Field(default=8, ge=3, le=15)
+
+
+class PipelineCreate(BaseModel):
+    """Track a job in the application pipeline (from the pool or manual)."""
+
+    job_id: int | None = None
+    title: str = Field(default="", max_length=255)
+    company: str = Field(default="", max_length=255)
+    url: str = Field(default="", max_length=1024)
+    source: str = Field(default="", max_length=64)
+    status: str = ""
+    notes: str = Field(default="", max_length=4000)
+
+
+class PipelineUpdate(BaseModel):
+    status: str | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+    next_action_at: str | None = None
 
 
 class TaskUpdateRequest(BaseModel):

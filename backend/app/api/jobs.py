@@ -12,6 +12,7 @@ from ..database.models import JobAnalysis, JobPosting, User, ensure_default_user
 from ..gateway import GatewayManager
 from ..schemas import CandidateProfile
 from ..services.job_import import SOURCES, ImportError as BoardImportError, fetch_postings
+from ..services.pool_insights import candidate_from_resume, resolve_resume
 from ..services.posting_profile import build_job_profile
 from ..services.skills import detect_role_category, extract_skills
 from ..utils.web import UnsafeURLError, fetch_job_posting
@@ -442,6 +443,130 @@ def delete_pool_job(
 def pool_sources():
     """Boards the importer can pull from."""
     return {"sources": list(SOURCES)}
+
+
+@router.get("/pool/insights")
+def pool_insights(
+    resume_id: int | None = None,
+    include_shared: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Aggregate every pool job against the resume: which skills unlock the
+    most jobs, how strong the pool fit is, and where the best shot is."""
+    from ..services.pool_insights import analyze_pool, skill_unlocks
+
+    resume = resolve_resume(db, user.id, resume_id)
+    if resume is None:
+        raise HTTPException(404, "Upload a resume first.")
+
+    query = db.query(JobPosting).filter(JobPosting.user_id == user.id)
+    if include_shared:
+        query = db.query(JobPosting).filter(
+            (JobPosting.user_id == user.id) | (JobPosting.user_id.is_(None))
+        )
+    rows = query.order_by(JobPosting.created_at.desc(), JobPosting.id.desc()).all()
+    if not rows:
+        return {
+            "resume_id": resume.id,
+            "jobs_scored": 0,
+            "skill_unlocks": [],
+            "message": "Your target job pool is empty. Import real jobs first.",
+        }
+
+    analysis = analyze_pool(candidate_from_resume(resume), resume.raw_text or "", rows)
+    scores = analysis["scores"]
+    best = max(analysis["job_scores"], key=lambda j: j["score"]) if analysis["job_scores"] else None
+    return {
+        "resume_id": resume.id,
+        "jobs_scored": len(scores),
+        "average_score": round(sum(scores) / len(scores), 1) if scores else 0.0,
+        "best_job": best,
+        "skill_unlocks": skill_unlocks(analysis, limit=12),
+    }
+
+
+def _tailor_payload(db: Session, user: User, job_id: int, resume_id: int | None):
+    """Shared tailoring core: resolve posting + resume, score fit, tailor."""
+    from ..agents.compatibility_agent import CompatibilityAgent
+    from ..services.tailor_service import tailor_for_job
+
+    posting = db.get(JobPosting, job_id)
+    if not posting or (posting.user_id is not None and posting.user_id != user.id):
+        raise HTTPException(404, "Pool job not found.")
+    resume = resolve_resume(db, user.id, resume_id)
+    if resume is None:
+        raise HTTPException(404, "Upload a resume first.")
+
+    try:
+        job_profile = build_job_profile(posting)
+    except Exception as exc:
+        raise HTTPException(422, f"That posting could not be parsed: {exc}") from exc
+
+    try:
+        candidate = candidate_from_resume(resume)
+    except Exception as exc:
+        raise HTTPException(400, f"Resume profile could not be parsed: {exc}") from exc
+
+    tailor = tailor_for_job(candidate, job_profile, posting.raw_text or "")
+    fit = CompatibilityAgent().analyze(candidate, job_profile, resume.raw_text or "")
+
+    def _skill_name(item) -> str:
+        if isinstance(item, dict):
+            return item.get("skill", "")
+        return getattr(item, "skill", "")
+
+    tailor["fit_score"] = round(fit.overall_score, 1)
+    tailor["matched_from_agent"] = [s for s in map(_skill_name, fit.matched_skills or []) if s][:8]
+    tailor["job"] = {"id": posting.id, "title": posting.title, "company": posting.company, "url": posting.url}
+    tailor["resume_id"] = resume.id
+    return tailor
+
+
+@router.post("/tailor")
+def tailor_resume_for_job(
+    job_id: int,
+    resume_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Tailor the caller's resume for one pool job: bullet ordering, skill
+    tags, fit score and a cover-letter draft. No content is invented."""
+    return _tailor_payload(db, user, job_id, resume_id)
+
+
+@router.get("/tailor/export")
+def tailor_export(
+    job_id: int,
+    resume_id: int | None = None,
+    format: str = "html",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Download the tailored application as print-ready HTML or Markdown."""
+    from fastapi.responses import Response
+
+    from ..services.tailor_service import tailor_html, tailor_markdown
+
+    tailor = _tailor_payload(db, user, job_id, resume_id)
+    job = tailor["job"]
+    if format == "md":
+        content = tailor_markdown(tailor, job["title"], job["company"])
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="tailored-{job["id"]}.md"'
+                )
+            },
+        )
+    content = tailor_html(tailor, job["title"], job["company"])
+    return Response(
+        content=content,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="tailored-{job["id"]}.html"'},
+    )
 
 
 @router.get("/{job_id}")

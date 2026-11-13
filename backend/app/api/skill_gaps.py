@@ -16,7 +16,7 @@ from ..schemas import CompatibilityReport as CompatibilitySchema
 from ..services.roadmap_service import generate_roadmap
 from .compatibility import gap_to_dict, persist_gap
 from .deps import get_current_user, iso
-from .schemas import GapForJobRequest, GapGenerateRequest, TaskUpdateRequest
+from .schemas import GapForJobRequest, GapGenerateRequest, PoolGapGenerateRequest, TaskUpdateRequest
 
 router = APIRouter(prefix="/api/skill-gaps", tags=["skill gaps"])
 
@@ -72,6 +72,90 @@ def update_task(
     db.commit()
     report = db.get(SkillGapReport, task.report_id)
     return gap_to_dict(report)
+
+
+@router.post("/generate-for-pool")
+def generate_gap_for_pool(
+    payload: PoolGapGenerateRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """One combined plan of approach for the whole target job pool.
+
+    Missing skills are aggregated across every pool posting and ranked by how
+    many jobs they unlock; the top ``max_skills`` become a single roadmap.
+    """
+    from ..services.pool_insights import (
+        analyze_pool,
+        candidate_from_resume,
+        pool_report,
+        resolve_resume,
+        skill_unlocks,
+    )
+    from ..services.roadmap_service import generate_roadmap
+    from ..database.models import JobAnalysis, JobPosting
+
+    resume = resolve_resume(db, user.id, payload.resume_id)
+    if resume is None:
+        raise HTTPException(404, "Upload a resume first.")
+
+    rows = (
+        db.query(JobPosting)
+        .filter(JobPosting.user_id == user.id)
+        .order_by(JobPosting.created_at.desc(), JobPosting.id.desc())
+        .all()
+    )
+    if not rows:
+        raise HTTPException(404, "Your target job pool is empty. Import real jobs first.")
+
+    analysis = analyze_pool(candidate_from_resume(resume), resume.raw_text or "", rows)
+    if not analysis["job_scores"]:
+        raise HTTPException(422, "No pool posting could be scored against this resume.")
+
+    report = pool_report(analysis, max_skills=payload.max_skills)
+
+    # Mirror the aggregate into job_analyses for history/analytics consistency.
+    top_jobs = sorted(analysis["job_scores"], key=lambda j: -j["score"])[:5]
+    job = JobAnalysis(
+        user_id=user.id,
+        title="Target job pool (combined)",
+        company="",
+        source_url="",
+        raw_text=(
+            "Combined target pool:\n"
+            + "\n".join(f"- {j['title']} @ {j['company']} (fit {j['score']})" for j in top_jobs)
+        )[:40000],
+        profile={
+            "job_title": "Target job pool (combined)",
+            "company": "",
+            "required_skills": [item["label"] for item in sorted(
+                analysis["missing"].values(), key=lambda r: -r["count"]
+            )[:payload.max_skills]],
+        },
+        provider="pool",
+    )
+    db.add(job)
+    db.flush()
+
+    record = CompatibilityReport(
+        user_id=user.id,
+        resume_id=resume.id,
+        job_id=job.id,
+        overall_score=report.overall_score,
+        report=report.model_dump(),
+    )
+    db.add(record)
+    db.flush()
+
+    gap = generate_roadmap(report, limit=payload.max_skills)
+    record_gap = persist_gap(db, user.id, record.id, gap)
+    return {
+        **gap_to_dict(record_gap),
+        "compatibility_id": record.id,
+        "compatibility_score": report.overall_score,
+        "jobs_scored": len(analysis["scores"]),
+        "skill_unlocks": skill_unlocks(analysis, limit=8),
+    }
 
 
 @router.get("/{gap_id}")

@@ -10,7 +10,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import account, auth, compatibility, dashboard, interviews, jobs, providers, resume, skill_gaps
+from .api import (
+    account,
+    auth,
+    compatibility,
+    dashboard,
+    interviews,
+    jobs,
+    pipeline,
+    providers,
+    resume,
+    skill_gaps,
+)
 from .config import BASE_DIR, settings
 from .database.models import init_db
 from .graph.workflow import SupervisorAgent
@@ -72,7 +83,7 @@ def health():
     }
 
 
-for module in (auth, resume, jobs, compatibility, skill_gaps, interviews, providers, dashboard, account):
+for module in (auth, resume, jobs, compatibility, skill_gaps, interviews, providers, dashboard, pipeline, account):
     app.include_router(module.router)
 
 

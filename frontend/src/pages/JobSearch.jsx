@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Briefcase, Globe, Search, Sparkles, Upload } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Briefcase, Globe, Lightbulb, Search, Sparkles, Upload } from 'lucide-react'
 import api, { apiError } from '../services/api'
 import JobMatchRanking from '../components/JobMatchRanking'
 import { EmptyState, ErrorBanner, LoadingBlock } from '../components/ui'
@@ -23,6 +23,9 @@ export default function JobSearch() {
   const [importing, setImporting] = useState(false)
   const [importNote, setImportNote] = useState('')
   const [poolSize, setPoolSize] = useState(null)
+  const [insights, setInsights] = useState(null)
+  const [buildingPlan, setBuildingPlan] = useState(false)
+  const navigate = useNavigate()
 
   useEffect(() => {
     Promise.all([
@@ -58,6 +61,31 @@ export default function JobSearch() {
       setError(apiError(e))
     } finally {
       setImporting(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedId) return
+    let alive = true
+    api
+      .poolInsights(selectedId)
+      .then((d) => alive && setInsights(d))
+      .catch(() => alive && setInsights(null))
+    return () => {
+      alive = false
+    }
+  }, [selectedId, poolSize])
+
+  async function buildCombinedPlan() {
+    setBuildingPlan(true)
+    setError('')
+    try {
+      const gap = await api.generateGapForPool({ resume_id: selectedId })
+      navigate(`/skill-gap?gap=${gap.id}`)
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setBuildingPlan(false)
     }
   }
 
@@ -131,6 +159,50 @@ export default function JobSearch() {
             </Link>
           }
         />
+      )}
+
+      {insights?.jobs_scored > 0 && (
+        <div className="card card-pad">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                <Lightbulb className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="section-title">Learn one skill, unlock more jobs</h3>
+                <p className="mt-0.5 text-xs text-ink-500">
+                  Gaps aggregated across all {insights.jobs_scored} pool jobs · average fit{' '}
+                  {insights.average_score}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={buildCombinedPlan}
+              disabled={buildingPlan}
+              className="btn-primary btn-sm shrink-0"
+            >
+              {buildingPlan ? 'Building…' : 'Build combined plan'}
+            </button>
+          </div>
+          <ul className="space-y-2">
+            {(insights.skill_unlocks || []).slice(0, 5).map((u) => (
+              <li key={u.skill} className="flex items-center justify-between gap-3 rounded-xl bg-ink-50/60 px-3 py-2">
+                <div className="min-w-0">
+                  <span className="text-sm font-semibold text-ink-900">{u.skill}</span>
+                  {u.partial && (
+                    <span className="ml-2 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                      partial credit
+                    </span>
+                  )}
+                </div>
+                <span className="shrink-0 text-xs font-bold text-brand-700">
+                  unlocks {u.unlocks} job{u.unlocks === 1 ? '' : 's'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="card card-pad">

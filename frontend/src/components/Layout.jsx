@@ -10,6 +10,7 @@ import {
   Menu,
   MessagesSquare,
   Mic,
+  ListChecks,
   Route,
   Search,
   Settings,
@@ -23,6 +24,7 @@ import { useAuth } from '../services/auth'
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/jobs', label: 'Job search', icon: Search },
+  { to: '/pipeline', label: 'Pipeline', icon: ListChecks },
   { to: '/resume', label: 'Resume analysis', icon: FileText },
   { to: '/compatibility', label: 'Job compatibility', icon: Target },
   { to: '/skill-gap', label: 'Skill gap & roadmap', icon: Route },
