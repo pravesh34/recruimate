@@ -127,6 +127,16 @@ export const api = {
       .get('/jobs/match-resume', { params: resumeId ? { resume_id: resumeId } : {} })
       .then((r) => r.data),
 
+  // Target job pool (per candidate)
+  importJobs: (payload) => client.post('/jobs/pool/import', payload).then((r) => r.data),
+  listPool: () => client.get('/jobs/pool').then((r) => r.data),
+  addToPool: (payload) => client.post('/jobs/pool/add', payload).then((r) => r.data),
+  deletePoolJob: (id) => client.delete(`/jobs/pool/${id}`).then((r) => r.data),
+
+  // Plan of approach + mock interview against a pool job
+  generateGapForJob: (payload) => client.post('/skill-gaps/generate-for-job', payload).then((r) => r.data),
+  createInterviewForJob: (payload) => client.post('/interviews/for-job', payload).then((r) => r.data),
+
   // Compatibility / analysis
   analyzeCompatibility: (payload) => client.post('/compatibility/analyze', payload).then((r) => r.data),
   runAnalysis: (payload) => client.post('/analysis/run', payload).then((r) => r.data),

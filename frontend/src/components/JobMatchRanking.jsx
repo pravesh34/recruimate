@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowUpRight,
   Briefcase,
   CheckCircle2,
+  ClipboardList,
   Loader2,
   MapPin,
+  Mic,
   RefreshCw,
   Search,
   Target,
@@ -30,13 +32,46 @@ function skillNames(items) {
     .filter(Boolean)
 }
 
-function MatchCard({ match }) {
+function MatchCard({ match, resumeId }) {
   const tone = scoreTone(match.compatibility_score)
   const verdictTone = VERDICT_TONES[match.verdict] || 'ink'
   const matched = skillNames(match.matched_skills)
   const partial = skillNames(match.partial_skills)
   const missing = skillNames(match.missing_skills)
   const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+  const navigate = useNavigate()
+
+  async function makePlan() {
+    setBusy('plan')
+    setError('')
+    try {
+      const gap = await api.generateGapForJob({ resume_id: resumeId, job_id: match.job_id })
+      navigate(`/skill-gap?gap=${gap.id}`)
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function startInterview() {
+    setBusy('interview')
+    setError('')
+    try {
+      const session = await api.createInterviewForJob({
+        resume_id: resumeId,
+        job_id: match.job_id,
+        question_limit: 8,
+      })
+      navigate(`/mock-interview/${session.id}`)
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setBusy('')
+    }
+  }
 
   return (
     <li className="border-b border-ink-100 py-4 first:pt-0 last:border-b-0 last:pb-0">
@@ -154,8 +189,41 @@ function MatchCard({ match }) {
               Apply <ArrowUpRight className="h-3 w-3" />
             </a>
           )}
+          <div className="mt-1 flex flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={makePlan}
+              disabled={Boolean(busy)}
+              className="btn-secondary btn-sm inline-flex items-center gap-1"
+              title="Build a plan of approach for this role"
+            >
+              {busy === 'plan' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <ClipboardList className="h-3 w-3" />
+              )}
+              Plan
+            </button>
+            <button
+              type="button"
+              onClick={startInterview}
+              disabled={Boolean(busy)}
+              className="btn-primary btn-sm inline-flex items-center gap-1"
+              title="Practise a scored mock interview for this role"
+            >
+              {busy === 'interview' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Mic className="h-3 w-3" />
+              )}
+              Interview
+            </button>
+          </div>
         </div>
       </div>
+      {error && (
+        <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
+      )}
     </li>
   )
 }
@@ -261,7 +329,7 @@ export default function JobMatchRanking({ resumeId, limit = 8 }) {
           ) : (
             <ul className="divide-y divide-ink-100">
               {visible.slice(0, limit).map((match) => (
-                <MatchCard key={match.job_id} match={match} />
+                <MatchCard key={match.job_id} match={match} resumeId={resumeId} />
               ))}
             </ul>
           )}
