@@ -27,6 +27,40 @@ class GapGenerateRequest(BaseModel):
     compatibility_id: int
 
 
+class GapForJobRequest(BaseModel):
+    """Generate a plan-of-approach roadmap against a target-pool posting."""
+
+    resume_id: int | None = None
+    job_id: int
+    track_tasks: bool = True
+
+
+class PoolImportRequest(BaseModel):
+    """Import real postings from a job board into the caller's target pool."""
+
+    source: str = Field(default="remotive")
+    query: str = Field(default="", max_length=120)
+    limit: int = Field(default=12, ge=1, le=50)
+
+
+class PoolAddRequest(BaseModel):
+    """Add one job to the pool from a URL or pasted description."""
+
+    url: str = ""
+    description: str = ""
+    title: str = ""
+    company: str = ""
+    location: str = ""
+
+
+class InterviewForJobRequest(BaseModel):
+    """Start a mock interview against a target-pool posting."""
+
+    resume_id: int | None = None
+    job_id: int
+    question_limit: int = Field(default=8, ge=3, le=15)
+
+
 class TaskUpdateRequest(BaseModel):
     completed: bool
 

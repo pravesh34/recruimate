@@ -1,6 +1,8 @@
 """Interview preparation, mock interview state machine and history."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -24,7 +26,12 @@ from ..schemas import (
 )
 from ..services.interview_service import build_final_report
 from .deps import get_current_user, get_gateway, iso
-from .schemas import InterviewAnswerRequest, InterviewCreateRequest, InterviewPrepRequest
+from .schemas import (
+    InterviewAnswerRequest,
+    InterviewCreateRequest,
+    InterviewForJobRequest,
+    InterviewPrepRequest,
+)
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
@@ -172,28 +179,34 @@ async def interview_prep(
     }
 
 
-@router.post("")
-async def create_interview(
-    payload: InterviewCreateRequest,
-    db: Session = Depends(get_db),
-    gateway: GatewayManager = Depends(get_gateway),
-    user=Depends(get_current_user),
+async def _start_session(
+    db: Session,
+    user,
+    compatibility: CompatibilityReport,
+    candidate: CandidateProfile,
+    job: JobProfile,
+    report: CompatibilitySchema,
+    gateway: GatewayManager,
+    role: str,
+    kind: str,
+    question_limit: int,
+    warning: str,
 ):
-    compatibility = _compat(db, payload.compatibility_id, user)
-    candidate, job, report = _profiles(db, compatibility)
-    bank, provider, warning = await InterviewAgent(gateway).build_question_bank(
-        candidate, job, report, limit=max(payload.question_limit, 6)
+    """Build the question bank and open a mock interview session."""
+    bank, provider, agent_warning = await InterviewAgent(gateway).build_question_bank(
+        candidate, job, report, limit=max(question_limit, 6)
     )
-    questions = _order_for_interview(bank.questions, payload.question_limit)
+    questions = _order_for_interview(bank.questions, question_limit)
     if not questions:
         raise HTTPException(422, "Could not generate interview questions for this role.")
+    warning = (warning + " " + agent_warning).strip()
 
     session = InterviewSession(
         user_id=user.id,
         compatibility_id=compatibility.id,
-        role=payload.role or job.job_title or "Target role",
+        role=role or job.job_title or "Target role",
         status="active",
-        kind=payload.kind,
+        kind=kind,
         provider=provider,
         state={
             "questions": questions,
@@ -201,7 +214,7 @@ async def create_interview(
             "follow_up_used": False,
             "answered": 0,
             "max_questions": len(questions),
-            "question_limit": payload.question_limit,
+            "question_limit": question_limit,
         },
     )
     db.add(session)
@@ -225,6 +238,31 @@ async def create_interview(
     )
     db.commit()
     db.refresh(session)
+    return session, warning
+
+
+@router.post("")
+async def create_interview(
+    payload: InterviewCreateRequest,
+    db: Session = Depends(get_db),
+    gateway: GatewayManager = Depends(get_gateway),
+    user=Depends(get_current_user),
+):
+    compatibility = _compat(db, payload.compatibility_id, user)
+    candidate, job, report = _profiles(db, compatibility)
+    session, warning = await _start_session(
+        db,
+        user,
+        compatibility,
+        candidate,
+        job,
+        report,
+        gateway,
+        payload.role,
+        payload.kind,
+        payload.question_limit,
+        "",
+    )
     return {**session_to_dict(session), "warning": warning}
 
 
@@ -438,3 +476,96 @@ def delete_interview(
     db.delete(session)
     db.commit()
     return {"deleted": True, "id": interview_id}
+
+
+@router.post("/for-job")
+async def create_interview_for_job(
+    payload: InterviewForJobRequest,
+    db: Session = Depends(get_db),
+    gateway: GatewayManager = Depends(get_gateway),
+    user=Depends(get_current_user),
+):
+    """Start a mock interview against a target-pool posting.
+
+    The posting is mirrored into ``job_analyses`` and a compatibility report is
+    persisted first, so the session links into history and analytics. Only the
+    caller's pool jobs (or shared/demo postings) can be used.
+    """
+    from ..agents.compatibility_agent import CompatibilityAgent
+    from ..database.models import JobAnalysis, JobPosting, ResumeProfile
+    from ..schemas import CandidateProfile
+    from ..services.posting_profile import build_job_profile
+
+    posting = db.get(JobPosting, payload.job_id)
+    if not posting or (posting.user_id is not None and posting.user_id != user.id):
+        raise HTTPException(404, "Pool job not found.")
+
+    resume = (
+        db.query(ResumeProfile)
+        .filter(ResumeProfile.user_id == user.id)
+        .filter(ResumeProfile.id == payload.resume_id)
+        .first()
+        if payload.resume_id
+        else db.query(ResumeProfile)
+        .filter(ResumeProfile.user_id == user.id)
+        .order_by(ResumeProfile.created_at.desc(), ResumeProfile.id.desc())
+        .first()
+    )
+    if not resume:
+        raise HTTPException(404, "Upload a resume first.")
+
+    raw_profile = resume.profile or "{}"
+    profile_dict = json.loads(raw_profile) if isinstance(raw_profile, str) else (raw_profile or {})
+    try:
+        candidate = CandidateProfile.model_validate(profile_dict)
+    except Exception as exc:
+        raise HTTPException(400, f"Resume profile could not be parsed: {exc}") from exc
+
+    try:
+        job_profile = build_job_profile(posting)
+    except Exception as exc:
+        raise HTTPException(422, f"That posting could not be parsed: {exc}") from exc
+
+    report = CompatibilityAgent().analyze(candidate, job_profile, resume.raw_text or "")
+
+    # Mirror the posting into job_analyses and persist the compatibility report.
+    job_row = JobAnalysis(
+        user_id=user.id,
+        title=posting.title or job_profile.job_title,
+        company=posting.company or job_profile.company,
+        source_url=posting.url or "",
+        raw_text=(posting.raw_text or "")[:40000],
+        profile=job_profile.model_dump(),
+        provider="pool",
+    )
+    db.add(job_row)
+    db.flush()
+    record = CompatibilityReport(
+        user_id=user.id,
+        resume_id=resume.id,
+        job_id=job_row.id,
+        overall_score=report.overall_score,
+        report=report.model_dump(),
+    )
+    db.add(record)
+    db.flush()
+
+    session, warning = await _start_session(
+        db,
+        user,
+        record,
+        candidate,
+        job_profile,
+        report,
+        gateway,
+        posting.title or job_profile.job_title,
+        "mock",
+        payload.question_limit,
+        "",
+    )
+    return {
+        **session_to_dict(session),
+        "warning": warning,
+        "compatibility_score": report.overall_score,
+        "job": {"title": posting.title, "company": posting.company, "url": posting.url},
+    }

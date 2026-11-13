@@ -5,15 +5,18 @@ import json
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..agents.job_agent import JobAgent
-from ..database.models import JobAnalysis, User, ensure_default_user, get_db
+from ..database.models import JobAnalysis, JobPosting, User, ensure_default_user, get_db
 from ..gateway import GatewayManager
+from ..schemas import CandidateProfile
+from ..services.job_import import SOURCES, ImportError as BoardImportError, fetch_postings
+from ..services.posting_profile import build_job_profile
+from ..services.skills import detect_role_category, extract_skills
 from ..utils.web import UnsafeURLError, fetch_job_posting
 from .deps import get_current_user, get_gateway, iso
-from .schemas import JobAnalyzeRequest
+from .schemas import JobAnalyzeRequest, PoolAddRequest, PoolImportRequest
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -102,17 +105,19 @@ def list_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_us
 @router.get("/match-resume")
 async def match_resume_to_jobs(
     resume_id: int | None = None,
+    include_shared: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Search jobs according to resume and rank them by compatibility.
+    """Search the caller's target job pool and rank it by compatibility.
 
     Given a resume, computes a deterministic compatibility score between the
-    resume and every stored job posting, then returns the jobs ranked by
-    score (highest first) so the candidate can shortlist and apply.
+    resume and every posting in the caller's pool, then returns the jobs
+    ranked by score (highest first) so the candidate can shortlist and apply.
 
     Args:
         resume_id: Resume profile id. Uses the most recent resume if omitted.
+        include_shared: Also score shared/demo postings (``user_id`` NULL).
 
     Returns:
         ``{"matches": [...]}`` where each match carries the job identity,
@@ -121,8 +126,6 @@ async def match_resume_to_jobs(
     """
     from ..agents.compatibility_agent import CompatibilityAgent
     from ..database.models import ResumeProfile
-    from ..schemas import CandidateProfile, JobProfile
-    from ..services.skills import extract_skills
 
     resume = (
         db.query(ResumeProfile)
@@ -146,102 +149,45 @@ async def match_resume_to_jobs(
     except Exception as exc:
         raise HTTPException(400, f"Resume profile could not be parsed: {exc}") from exc
 
-    rows = db.execute(
-        text(
-            "SELECT id, title, company, location, url, raw_text, parsed "
-            "FROM job_postings ORDER BY id"
+    query = db.query(JobPosting).filter(JobPosting.user_id == user.id)
+    if include_shared:
+        query = db.query(JobPosting).filter(
+            (JobPosting.user_id == user.id) | (JobPosting.user_id.is_(None))
         )
-    ).fetchall()
+    rows = query.order_by(JobPosting.created_at.desc(), JobPosting.id.desc()).all()
     if not rows:
-        return {"matches": [], "resume_id": resume.id, "message": "No job postings found."}
+        return {
+            "matches": [],
+            "resume_id": resume.id,
+            "message": "Your target job pool is empty. Import real jobs or add one manually.",
+        }
 
     agent = CompatibilityAgent()
     matches: list[dict] = []
 
-    for job_id, title, company, location, url, raw_text, parsed_json in rows:
-        parsed = json.loads(parsed_json) if isinstance(parsed_json, str) else (parsed_json or {})
-
-        # Build a job profile from whatever the posting already carries.
-        required = parsed.get("skills") or parsed.get("required_skills") or []
-        preferred = parsed.get("preferred_skills") or []
-        required = required if isinstance(required, list) else [required]
-        preferred = preferred if isinstance(preferred, list) else [preferred]
-
-        # Postings imported from job boards often have no parsed skills yet.
-        # Recover them from the description so the ranking is meaningful.
-        clean_text = re.sub(r"<[^>]+>", " ", raw_text or "")
-        clean_text = re.sub(r"\s+", " ", clean_text).strip()
-
-        if not required and clean_text:
-            required = extract_skills(clean_text)
-
-        # Pull a minimum-experience hint out of the description ("3+ years").
-        min_years = parsed.get("min_years_experience")
-        if not min_years and clean_text:
-            match = re.search(r"(\d+)\s*\+?\s*years", clean_text, re.IGNORECASE)
-            if match:
-                try:
-                    min_years = float(match.group(1))
-                except ValueError:
-                    min_years = 0.0
-
-        def _as_list(value) -> list[str]:
-            if not value:
-                return []
-            if isinstance(value, list):
-                return [str(v) for v in value if v]
-            return [str(value)]
-
-        job_profile = JobProfile.model_validate(
-            {
-                "job_title": title or "Untitled role",
-                "company": company or "Unknown company",
-                "location": location or "",
-                "employment_type": parsed.get("employment_type", "") or "",
-                "role_category": parsed.get("role_category", "general") or "general",
-                "required_skills": required,
-                "preferred_skills": preferred,
-                "experience_requirements": _as_list(parsed.get("experience_requirements")),
-                "education_requirements": _as_list(parsed.get("education_requirements")),
-                "responsibilities": _as_list(parsed.get("responsibilities")),
-                "behavioural_expectations": _as_list(parsed.get("behavioural_expectations")),
-                "certifications": _as_list(parsed.get("certifications")),
-                "min_years_experience": float(min_years or 0.0),
-            }
-        )
+    for row in rows:
+        try:
+            job_profile = build_job_profile(row)
+        except Exception as exc:  # never let one bad posting break the ranking
+            matches.append(_unscored_match(row, f"Score unavailable: {exc}"))
+            continue
 
         try:
             report = agent.analyze(candidate, job_profile, resume.raw_text or "")
         except Exception as exc:  # never let one bad posting break the ranking
-            matches.append(
-                {
-                    "job_id": job_id,
-                    "title": title or "Untitled role",
-                    "company": company or "Unknown company",
-                    "location": location or "",
-                    "url": url or "",
-                    "compatibility_score": 0.0,
-                    "verdict": "Unscored",
-                    "matched_skills": [],
-                    "partial_skills": [],
-                    "missing_skills": [],
-                    "evidence": [],
-                    "strengths": [],
-                    "concerns": [],
-                    "explanation": f"Score unavailable: {exc}",
-                    "error": str(exc)[:200],
-                }
-            )
+            matches.append(_unscored_match(row, f"Score unavailable: {exc}"))
             continue
 
         data = report.model_dump()
         matches.append(
             {
-                "job_id": job_id,
-                "title": title or "Untitled role",
-                "company": company or "Unknown company",
-                "location": location or "",
-                "url": url or "",
+                "job_id": row.id,
+                "title": row.title or "Untitled role",
+                "company": row.company or "Unknown company",
+                "location": row.location or "",
+                "url": row.url or "",
+                "source": row.source or "",
+                "in_pool": row.user_id == user.id,
                 "compatibility_score": report.overall_score,
                 "verdict": data.get("verdict", ""),
                 "matched_skills": data.get("matched_skills", []),
@@ -265,6 +211,237 @@ async def match_resume_to_jobs(
         "resume_filename": resume.filename,
         "total": len(matches),
     }
+
+
+def _unscored_match(row: JobPosting, explanation: str) -> dict:
+    return {
+        "job_id": row.id,
+        "title": row.title or "Untitled role",
+        "company": row.company or "Unknown company",
+        "location": row.location or "",
+        "url": row.url or "",
+        "source": row.source or "",
+        "in_pool": False,
+        "compatibility_score": 0.0,
+        "verdict": "Unscored",
+        "matched_skills": [],
+        "partial_skills": [],
+        "missing_skills": [],
+        "evidence": [],
+        "strengths": [],
+        "concerns": [],
+        "explanation": explanation,
+        "error": explanation[:200],
+    }
+
+
+
+
+# --------------------------------------------------------------------------- #
+# Target job pool (per-candidate)
+# --------------------------------------------------------------------------- #
+def _pool_row_to_dict(row: JobPosting) -> dict:
+    parsed = row.parsed if isinstance(row.parsed, dict) else {}
+    return {
+        "id": row.id,
+        "title": row.title,
+        "company": row.company,
+        "location": row.location,
+        "url": row.url,
+        "source": row.source,
+        "skills": (parsed.get("skills") or [])[:12],
+        "min_years_experience": parsed.get("min_years_experience", 0),
+        "created_at": iso(row.created_at),
+    }
+
+
+def _upsert_pool_postings(
+    db: Session, user: User, postings: list[dict], default_source: str
+) -> tuple[int, int]:
+    """Insert new pool rows and update existing ones (matched on URL)."""
+    from ..services.job_import import strip_html
+
+    existing = {
+        row.url: row
+        for row in db.query(JobPosting).filter(JobPosting.user_id == user.id).all()
+        if row.url
+    }
+    created = 0
+    updated = 0
+    for posting in postings:
+        clean_text = re.sub(r"\s+", " ", strip_html(posting["description"])).strip()
+        # Skills: board tags first (they are curated), then anything the
+        # deterministic extractor recognises in the description.
+        skills: list[str] = []
+        seen: set[str] = set()
+        for skill in [*posting["tags"], *extract_skills(f"{clean_text} {', '.join(posting['tags'])}")]:
+            key = skill.strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                skills.append(skill.strip())
+        parsed = {
+            "skills": skills[:25],
+            "preferred_skills": [],
+            "min_years_experience": min_years_hint(clean_text),
+            "responsibilities": [],
+            "certifications": [],
+            "degrees": [],
+            "role_category": detect_role_category(posting["title"], clean_text),
+            "employment_type": "Full-time",
+            "match_reason": f"Imported from {posting['source']}.",
+            "fit_score": 0.0,
+        }
+        row = existing.get(posting["url"])
+        if row:
+            row.title = posting["title"]
+            row.company = posting["company"]
+            row.location = posting["location"]
+            row.raw_text = posting["raw_text"]
+            row.parsed = parsed
+            row.source = posting.get("source", default_source)
+            updated += 1
+        else:
+            db.add(
+                JobPosting(
+                    user_id=user.id,
+                    source=posting.get("source", default_source),
+                    url=posting["url"],
+                    title=posting["title"],
+                    company=posting["company"],
+                    location=posting["location"],
+                    raw_text=posting["raw_text"],
+                    parsed=parsed,
+                    provider="heuristic",
+                    is_demo=False,
+                )
+            )
+            created += 1
+    db.commit()
+    return created, updated
+
+
+def min_years_hint(text: str) -> float:
+    match = re.search(r"(\d+)\s*\+?\s*years", text or "", re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+@router.post("/pool/import")
+async def import_to_pool(
+    payload: PoolImportRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pull real postings from a job board straight into the caller's pool."""
+    try:
+        postings = await fetch_postings(payload.source, payload.query, payload.limit)
+    except BoardImportError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    created, updated = _upsert_pool_postings(db, user, postings, payload.source)
+    total = db.query(JobPosting).filter(JobPosting.user_id == user.id).count()
+    return {
+        "imported": created,
+        "updated": updated,
+        "pool_size": total,
+        "source": payload.source,
+        "query": payload.query,
+    }
+
+
+@router.get("/pool")
+def list_pool(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = (
+        db.query(JobPosting)
+        .filter(JobPosting.user_id == user.id)
+        .order_by(JobPosting.created_at.desc(), JobPosting.id.desc())
+        .limit(200)
+        .all()
+    )
+    return {"jobs": [_pool_row_to_dict(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/pool/add")
+async def add_to_pool(
+    payload: PoolAddRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Add a single job to the pool from a public URL or pasted text."""
+    description = (payload.description or "").strip()
+    url = (payload.url or "").strip()
+    if not description and url:
+        try:
+            description = await fetch_job_posting(url)
+        except UnsafeURLError as exc:
+            raise HTTPException(400, f"Unsafe or invalid URL: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(422, f"Could not fetch that posting: {exc}") from exc
+    if len(description) < 40:
+        raise HTTPException(400, "Paste a job description (at least 40 characters) or a public URL.")
+
+    clean_text = re.sub(r"\s+", " ", description).strip()
+    title = (payload.title or clean_text.splitlines()[0] if clean_text else "")[:255]
+    company = payload.company.strip()
+    if not company:
+        match = re.search(r"(?:at|Company:)\s+([A-Z][\w&.\- ]{1,60})", clean_text)
+        company = match.group(1).strip() if match else ""
+    skills = extract_skills(clean_text)
+    parsed = {
+        "skills": skills[:25],
+        "preferred_skills": [],
+        "min_years_experience": min_years_hint(clean_text),
+        "responsibilities": [],
+        "certifications": [],
+        "degrees": [],
+        "role_category": detect_role_category(title, clean_text),
+        "employment_type": "Full-time",
+        "match_reason": "Added manually.",
+        "fit_score": 0.0,
+    }
+    row = JobPosting(
+        user_id=user.id,
+        source="manual",
+        url=url[:1024],
+        title=title,
+        company=company[:255],
+        location=(payload.location or "").strip()[:255],
+        raw_text=clean_text[:40000],
+        parsed=parsed,
+        provider="heuristic",
+        is_demo=False,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"added": True, "job": _pool_row_to_dict(row)}
+
+
+@router.delete("/pool/{job_id}")
+def delete_pool_job(
+    job_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Remove a posting from the caller's pool (shared postings are protected)."""
+    row = db.get(JobPosting, job_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(404, "Pool job not found.")
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "id": job_id}
+
+
+@router.get("/pool/sources")
+def pool_sources():
+    """Boards the importer can pull from."""
+    return {"sources": list(SOURCES)}
 
 
 @router.get("/{job_id}")
