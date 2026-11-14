@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..agents.job_agent import JobAgent
-from ..database.models import JobAnalysis, JobPosting, User, ensure_default_user, get_db
+from ..database.models import JobAnalysis, JobPosting, User, get_db
 from ..gateway import GatewayManager
 from ..schemas import CandidateProfile
 from ..services.job_import import SOURCES, ImportError as BoardImportError, fetch_postings
@@ -17,7 +17,7 @@ from ..services.posting_profile import build_job_profile
 from ..services.skills import detect_role_category, extract_skills
 from ..utils.web import UnsafeURLError, fetch_job_posting
 from .deps import get_current_user, get_gateway, iso
-from .schemas import JobAnalyzeRequest, PoolAddRequest, PoolImportRequest
+from .schemas import JobAnalyzeRequest, PoolAddRequest, PoolImportRequest, PoolSingleRequest
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -66,7 +66,9 @@ async def analyze_job(
     if agent_warning:
         warning = (warning + " " + agent_warning).strip()
 
-    user = ensure_default_user(db)
+    # The job analysis belongs to the authenticated caller — never re-resolve
+    # to the default local account, which would write other users' analyses
+    # into the first user's data.
     job = JobAnalysis(
         user_id=user.id,
         title=(payload.title or profile.job_title)[:255],
@@ -249,7 +251,17 @@ def _pool_row_to_dict(row: JobPosting) -> dict:
         "company": row.company,
         "location": row.location,
         "url": row.url,
+        # Source attribution + the original Apply link (imported boards).
         "source": row.source,
+        "apply_url": row.apply_url or row.url,
+        "remote": bool(row.remote),
+        "employment_type": row.employment_type,
+        "experience_level": row.experience_level,
+        "salary_min": row.salary_min,
+        "salary_max": row.salary_max,
+        "salary_currency": row.salary_currency,
+        "salary_text": row.salary_text,
+        "posted_at": row.posted_at,
         "skills": (parsed.get("skills") or [])[:12],
         "min_years_experience": parsed.get("min_years_experience", 0),
         "created_at": iso(row.created_at),
@@ -354,6 +366,67 @@ async def import_to_pool(
         "source": payload.source,
         "query": payload.query,
     }
+
+
+@router.post("/pool/search")
+async def search_board(
+    payload: PoolImportRequest,
+    user: User = Depends(get_current_user),
+):
+    """Search a job board and LIST the results without touching the pool.
+
+    Nothing is persisted: the caller decides which listings to add via
+    ``POST /api/jobs/pool/import-single``. This keeps "browsing" and
+    "saving" separate so an accidental import never floods the pool.
+    """
+    try:
+        postings = await fetch_postings(payload.source, payload.query, payload.limit)
+    except BoardImportError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "source": payload.source,
+        "query": payload.query,
+        "listings": [
+            {
+                "title": p["title"],
+                "company": p["company"],
+                "location": p["location"],
+                "url": p["url"],
+                "source": p["source"],
+                "tags": p["tags"],
+                "snippet": (p["description"] or "").replace("\n", " ")[:240],
+            }
+            for p in postings
+        ],
+    }
+
+
+@router.post("/pool/import-single")
+def import_single(
+    payload: PoolSingleRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Save one browsed listing into the caller's pool (idempotent on URL)."""
+    title = (payload.title or "").strip()
+    url = (payload.url or "").strip()
+    if not title or not url:
+        raise HTTPException(400, "A title and URL are required to add a listing.")
+    posting = {
+        "title": title[:255],
+        "company": (payload.company or "").strip()[:255],
+        "location": (payload.location or "").strip()[:255],
+        "url": url[:1024],
+        "source": payload.source.strip()[:64] or "manual",
+        "tags": payload.tags,
+        "raw_text": (payload.description or "").strip()[:40000],
+        "description": (payload.description or "").strip()[:40000],
+    }
+    created, _ = _upsert_pool_postings(db, user, [posting], posting["source"])
+    total = db.query(JobPosting).filter(JobPosting.user_id == user.id).count()
+    return {"added": bool(created), "pool_size": total}
 
 
 @router.get("/pool")

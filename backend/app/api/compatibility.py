@@ -108,9 +108,16 @@ def compatibility_to_dict(record: CompatibilityReport, db: Session) -> dict:
 async def _resolve_job(
     db: Session, gateway: GatewayManager, job_id: int | None, description: str, user: User
 ) -> JobAnalysis:
+    """Resolve the job to score against.
+
+    Every path is scoped to the authenticated caller: an explicit ``job_id``
+    must belong to ``user.id``, and the implicit "latest analysis" fallback
+    picks the caller's latest analysis only. Cross-user references are
+    reported as 404 so other users' analyses can never be probed.
+    """
     if job_id:
         job = db.get(JobAnalysis, job_id)
-        if not job:
+        if not job or job.user_id != user.id:
             raise HTTPException(404, "Job analysis not found.")
         return job
     if description.strip():
@@ -127,7 +134,12 @@ async def _resolve_job(
         db.commit()
         db.refresh(job)
         return job
-    latest = db.query(JobAnalysis).order_by(JobAnalysis.created_at.desc(), JobAnalysis.id.desc()).first()
+    latest = (
+        db.query(JobAnalysis)
+        .filter(JobAnalysis.user_id == user.id)
+        .order_by(JobAnalysis.created_at.desc(), JobAnalysis.id.desc())
+        .first()
+    )
     if latest:
         return latest
     raise HTTPException(400, "Analyse a job description first or provide one.")
@@ -150,6 +162,37 @@ def _resolve_resume(db: Session, resume_id: int | None, user_id: int) -> ResumeP
     return resume
 
 
+def _resolve_pool_job(db: Session, pool_job_id: int | None, user: User) -> JobAnalysis:
+    """Mirror a pool posting into a JobAnalysis row owned by the caller.
+
+    Pool postings from public boards may be shared (``user_id IS NULL``) or
+    private to the caller; another user's private posting is a 404. The
+    mirror keeps history, analytics and downstream interview flows working
+    off a normal job-analysis id.
+    """
+    from ..agents.compatibility_agent import CompatibilityAgent
+    from ..database.models import JobPosting
+    from ..services.posting_profile import build_job_profile
+
+    posting = db.get(JobPosting, pool_job_id)
+    if not posting or (posting.user_id is not None and posting.user_id != user.id):
+        raise HTTPException(404, "Pool job not found.")
+    job_profile = build_job_profile(posting)
+    job = JobAnalysis(
+        user_id=user.id,
+        title=posting.title or job_profile.job_title,
+        company=posting.company or job_profile.company,
+        source_url=posting.url or "",
+        raw_text=(posting.raw_text or "")[:40000],
+        profile=job_profile.model_dump(),
+        provider="pool",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 @router.post("/compatibility/analyze")
 async def analyze_compatibility(
     payload: CompatibilityAnalyzeRequest,
@@ -158,7 +201,12 @@ async def analyze_compatibility(
     user: User = Depends(get_current_user),
 ):
     resume = _resolve_resume(db, payload.resume_id, user.id)
-    job = await _resolve_job(db, gateway, payload.job_id, payload.job_description, user)
+    if payload.job_id and payload.pool_job_id:
+        raise HTTPException(400, "Choose either a saved analysis or a pool job, not both.")
+    if payload.pool_job_id:
+        job = _resolve_pool_job(db, payload.pool_job_id, user)
+    else:
+        job = await _resolve_job(db, gateway, payload.job_id, payload.job_description, user)
     candidate = CandidateProfile.model_validate(resume.profile or {})
     job_profile = JobProfile.model_validate(job.profile or {})
     report = CompatibilityAgent().analyze(candidate, job_profile, resume.raw_text or "")
@@ -197,7 +245,12 @@ async def run_full_analysis(
 ):
     """Run the full LangGraph supervisor: resume → job → compatibility → gaps → interview prep."""
     resume = _resolve_resume(db, payload.resume_id, user.id)
-    job = await _resolve_job(db, gateway, payload.job_id, payload.job_description, user)
+    if payload.job_id and payload.pool_job_id:
+        raise HTTPException(400, "Choose either a saved analysis or a pool job, not both.")
+    if payload.pool_job_id:
+        job = _resolve_pool_job(db, payload.pool_job_id, user)
+    else:
+        job = await _resolve_job(db, gateway, payload.job_id, payload.job_description, user)
     supervisor = SupervisorAgent(gateway)
     state = await supervisor.run(resume.raw_text or "", job.raw_text or "")
     if not state.get("candidate") or not state.get("compatibility") or not state.get("gaps"):
@@ -247,6 +300,12 @@ def list_compatibility(db: Session = Depends(get_db), user: User = Depends(get_c
         .limit(50)
         .all()
     )
+    # One query for all referenced analyses instead of two per row (N+1).
+    job_ids = {r.job_id for r in rows if r.job_id}
+    job_titles = {
+        j.id: j.title
+        for j in db.query(JobAnalysis.id, JobAnalysis.title).filter(JobAnalysis.id.in_(job_ids)).all()
+    } if job_ids else {}
     return [
         {
             "id": r.id,
@@ -254,7 +313,7 @@ def list_compatibility(db: Session = Depends(get_db), user: User = Depends(get_c
             "verdict": (r.report or {}).get("verdict", ""),
             "resume_id": r.resume_id,
             "job_id": r.job_id,
-            "job_title": (db.get(JobAnalysis, r.job_id).title if db.get(JobAnalysis, r.job_id) else ""),
+            "job_title": job_titles.get(r.job_id, ""),
             "created_at": iso(r.created_at),
         }
         for r in rows

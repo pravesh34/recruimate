@@ -20,7 +20,7 @@ import secrets
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt as pyjwt
 
 from ..config import settings
 
@@ -85,15 +85,22 @@ def create_access_token(user_id: int, role: str, email: str) -> tuple[str, int]:
         "iat": int(now.timestamp()),
         "exp": int((now + dt.timedelta(seconds=expires_in)).timestamp()),
     }
-    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    token = pyjwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, expires_in
 
 
 def decode_access_token(token: str) -> dict[str, Any] | None:
-    """Decode and verify a JWT. Returns ``None`` when invalid or expired."""
+    """Decode and verify a JWT. Returns ``None`` when invalid or expired.
+
+    PyJWT with an explicit ``algorithms`` allow-list prevents algorithm
+    confusion attacks; the ``type`` check keeps refresh/reset tokens from
+    being replayed as access tokens.
+    """
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-    except JWTError:
+        payload = pyjwt.decode(
+            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
+    except pyjwt.PyJWTError:
         return None
     if payload.get("type") != "access":
         return None

@@ -21,8 +21,12 @@ numpy>=1.26
 
 # Auth
 bcrypt>=4.0
-python-jose[cryptography]>=3.3
+bcrypt
+pyjwt>=2.8
 
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.23
+
+# PDF rendering (canonical resume documents)
+reportlab>=4.0

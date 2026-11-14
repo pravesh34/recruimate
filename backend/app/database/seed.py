@@ -135,28 +135,56 @@ def seed_demo_candidates(db: Session) -> int:
         # Validate against the real schema so nothing silently drifts.
         CandidateProfile.model_validate(profile)
 
+        resume_text = build_resume_text(c)
         resume = (
             db.query(ResumeProfile)
             .filter(ResumeProfile.user_id == user.id, ResumeProfile.filename == c["resume_filename"])
             .first()
         )
         if resume:
-            resume.raw_text = build_resume_text(c)
+            resume.raw_text = resume_text
             resume.profile = profile
             resume.provider = "demo"
+            resume.pdf_path = _write_demo_pdf(user.id, resume_text, c["resume_filename"])
         else:
             db.add(
                 ResumeProfile(
                     user_id=user.id,
                     filename=c["resume_filename"],
                     storage_path="",
-                    raw_text=build_resume_text(c),
+                    pdf_path=_write_demo_pdf(user.id, resume_text, c["resume_filename"]),
+                    raw_text=resume_text,
                     profile=profile,
                     provider="demo",
                 )
             )
     db.commit()
     return created
+
+
+def _write_demo_pdf(user_id: int, text: str, filename: str) -> str:
+    """Render a demo candidate's resume to a real PDF file.
+
+    Demo accounts ship with actual PDF documents (not placeholders), so
+    "Open my resume" shows a genuine file on a fresh install.
+    """
+    from pathlib import Path
+
+    from ..config import settings
+
+    try:
+        from ..services.resume_pdf import render_resume_pdf
+
+        pdf_bytes = render_resume_pdf(text, title=Path(filename).stem or "Resume")
+        target = settings.upload_path / f"demo_{user_id}_{Path(filename).stem}.pdf"
+        target.write_bytes(pdf_bytes)
+        try:
+            target.chmod(0o600)
+        except OSError:
+            pass
+        return str(target)
+    except Exception:  # pragma: no cover - reportlab missing
+        return ""
 
 
 def reset_demo_data(db: Session) -> None:

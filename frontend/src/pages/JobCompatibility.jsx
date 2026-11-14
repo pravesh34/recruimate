@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
@@ -77,23 +77,42 @@ export default function JobCompatibility() {
   const [url, setUrl] = useState('')
   const [selectedJobId, setSelectedJobId] = useState('')
   const [jobs, setJobs] = useState([])
+  const [pool, setPool] = useState([])
   const [history, setHistory] = useState([])
   const [result, setResult] = useState(null)
   const [full, setFull] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
+  const scoreRef = useRef(null)
+  const reportRef = useRef(null)
+
+  function revealScore() {
+    // Bring the score into view without yanking the page around.
+    setTimeout(() => {
+      scoreRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }, 120)
+  }
 
   useEffect(() => {
-    Promise.allSettled([api.getResume(), api.listJobs(), api.listCompatibility()]).then(([res, jobRes, compRes]) => {
-      if (res.status === 'fulfilled') setResume(res.value)
-      if (jobRes.status === 'fulfilled') setJobs(jobRes.value)
-      if (compRes.status === 'fulfilled') setHistory(compRes.value)
-      setLoading(false)
-    })
+    Promise.allSettled([api.getResume(), api.listJobs(), api.listPool(), api.listCompatibility()]).then(
+      ([res, jobRes, poolRes, compRes]) => {
+        if (res.status === 'fulfilled') setResume(res.value)
+        if (jobRes.status === 'fulfilled') setJobs(jobRes.value)
+        if (poolRes.status === 'fulfilled') setPool(poolRes.value.jobs || [])
+        if (compRes.status === 'fulfilled') setHistory(compRes.value)
+        setLoading(false)
+      }
+    )
   }, [])
 
-  const selectedJob = useMemo(() => jobs.find((j) => String(j.id) === String(selectedJobId)), [jobs, selectedJobId])
+  const selectedJob = useMemo(() => {
+    if (String(selectedJobId).startsWith('pool-')) {
+      const id = Number(String(selectedJobId).slice(5))
+      return pool.find((j) => j.id === id)
+    }
+    return jobs.find((j) => String(j.id) === String(selectedJobId))
+  }, [jobs, pool, selectedJobId])
   const report = result?.report || null
   const hasInput = Boolean(selectedJobId || (mode === 'paste' ? text.trim().length > 30 : url.trim()))
 
@@ -111,12 +130,15 @@ export default function JobCompatibility() {
     try {
       const data = await api.analyzeCompatibility({
         resume_id: resume.id,
-        job_id: selectedJobId ? Number(selectedJobId) : undefined,
+        ...(String(selectedJobId).startsWith('pool-')
+          ? { pool_job_id: Number(String(selectedJobId).slice(5)) }
+          : { job_id: selectedJobId ? Number(selectedJobId) : undefined }),
         job_description: mode === 'paste' && !selectedJobId ? text : '',
         run_gap_analysis: true,
       })
       setResult(data)
       setFull(null)
+      revealScore()
       api.listCompatibility().then(setHistory).catch(() => {})
     } catch (e) {
       setError(apiError(e))
@@ -139,17 +161,50 @@ export default function JobCompatibility() {
     try {
       const data = await api.runAnalysis({
         resume_id: resume.id,
-        job_id: selectedJobId ? Number(selectedJobId) : undefined,
+        ...(String(selectedJobId).startsWith('pool-')
+          ? { pool_job_id: Number(String(selectedJobId).slice(5)) }
+          : { job_id: selectedJobId ? Number(selectedJobId) : undefined }),
         job_description: mode === 'paste' && !selectedJobId ? text : '',
       })
       setResult(data)
       setFull(data)
+      revealScore()
       api.listJobs().then(setJobs).catch(() => {})
       api.listCompatibility().then(setHistory).catch(() => {})
     } catch (e) {
       setError(apiError(e))
     } finally {
       setRunning(false)
+    }
+  }
+
+  async function checkPoolJob(poolId) {
+    const value = `pool-${poolId}`
+    setSelectedJobId(value)
+    setMode('saved')
+    setResult(null)
+    setFull(null)
+    if (!resume) {
+      setError('Upload a resume before checking a job.')
+      return
+    }
+    setAnalyzing(true)
+    setError('')
+    try {
+      const data = await api.analyzeCompatibility({
+        resume_id: resume.id,
+        pool_job_id: Number(poolId),
+        job_description: '',
+        run_gap_analysis: true,
+      })
+      setResult(data)
+      setFull(null)
+      revealScore()
+      api.listCompatibility().then(setHistory).catch(() => {})
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setAnalyzing(false)
     }
   }
 
@@ -226,16 +281,29 @@ export default function JobCompatibility() {
               )}
               {mode === 'saved' && (
                 <div>
-                  <label className="label">Choose a saved analysis</label>
+                  <label className="label">Choose a job</label>
                   <select className="input" value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)}>
                     <option value="">Select a job…</option>
-                    {jobs.map((job) => (
-                      <option key={job.id} value={job.id}>
-                        {job.title} {job.company ? `— ${job.company}` : ''}
-                      </option>
-                    ))}
+                    <optgroup label="My target pool">
+                      {pool.map((job) => (
+                        <option key={`pool-${job.id}`} value={`pool-${job.id}`}>
+                          {job.title} {job.company ? `— ${job.company}` : ''} (pool)
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Saved analyses">
+                      {jobs.map((job) => (
+                        <option key={job.id} value={job.id}>
+                          {job.title} {job.company ? `— ${job.company}` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
-                  {jobs.length === 0 && <p className="mt-2 text-xs text-ink-400">No saved analyses yet.</p>}
+                  {pool.length === 0 && jobs.length === 0 && (
+                    <p className="mt-2 text-xs text-ink-400">
+                      Nothing saved yet. Search the <Link to="/jobs" className="font-semibold text-brand-600">Job search</Link> page and add jobs to your pool first.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -258,9 +326,138 @@ export default function JobCompatibility() {
               <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
                 The full workflow runs resume + job intelligence, compatibility, gap analysis and interview preparation.
               </p>
+
+              {/* The score appears right here, directly under the buttons — no scrolling. */}
+              {result && (
+                <div ref={scoreRef} className="mt-5 border-t border-ink-100 pt-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">
+                        Overall match
+                      </p>
+                      <p
+                        className={classNames(
+                          'mt-1 text-4xl font-bold leading-none',
+                          result.overall_score >= 75
+                            ? 'text-emerald-600'
+                            : result.overall_score >= 50
+                              ? 'text-amber-600'
+                              : 'text-rose-600',
+                        )}
+                      >
+                        {Math.round(result.overall_score)}
+                        <span className="text-base font-semibold text-ink-400"> / 100</span>
+                      </p>
+                      <p className="mt-1.5 text-sm font-semibold text-ink-700">{report?.verdict}</p>
+                      <p className="mt-0.5 max-w-sm text-xs leading-relaxed text-ink-500">
+                        {selectedJob
+                          ? `${selectedJob.title}${selectedJob.company ? ` — ${selectedJob.company}` : ''}`
+                          : 'Your resume against this job description'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {result.gap_id && (
+                        <Link to={`/skill-gap?gap=${result.gap_id}`} className="btn-secondary btn-sm">
+                          <ListChecks className="h-3.5 w-3.5" /> Roadmap
+                        </Link>
+                      )}
+                      <button
+                        className="btn-primary btn-sm"
+                        onClick={() => navigate('/mock-interview', { state: { compatibilityId: result.id } })}
+                      >
+                        <PlayCircle className="h-3.5 w-3.5" /> Practise
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    {(report?.category_scores || []).map((category) => (
+                      <div key={category.name} className="rounded-xl bg-ink-50 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold text-ink-700">{category.name}</span>
+                          <span className="text-[11px] font-bold text-ink-500">{category.score}%</span>
+                        </div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-ink-200">
+                          <div
+                            className="h-full rounded-full bg-brand-500"
+                            style={{ width: `${Math.max(0, Math.min(100, category.score))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                    <span className="chip border-emerald-200 bg-emerald-50 text-emerald-700">
+                      {report?.matched_skills?.length || 0} matched
+                    </span>
+                    <span className="chip border-amber-200 bg-amber-50 text-amber-700">
+                      {report?.partially_matched_skills?.length || 0} partial
+                    </span>
+                    <span className="chip border-red-200 bg-red-50 text-red-700">
+                      {report?.missing_skills?.length || 0} missing
+                    </span>
+                    <button
+                      type="button"
+                      className="text-[11px] font-semibold text-brand-600 hover:text-brand-700"
+                      onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    >
+                      View full breakdown ↓
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-6 xl:col-span-2">
+              {/* Quick check straight from the personal job pool */}
+              {pool.length > 0 && (
+                <div className="card card-pad">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="section-title">Check a job from my pool</h3>
+                      <p className="mt-0.5 text-xs text-ink-500">
+                        Pick any job in your personal pool and score it against your resume right now.
+                      </p>
+                    </div>
+                    <Badge tone="blue">{pool.length} in pool</Badge>
+                  </div>
+                  <ul className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                    {pool.map((job) => (
+                      <li
+                        key={job.id}
+                        className={classNames(
+                          'flex items-center justify-between gap-3 rounded-xl border p-3 transition',
+                          String(selectedJobId) === `pool-${job.id}`
+                            ? 'border-brand-300 bg-brand-50'
+                            : 'border-ink-100 hover:border-brand-200',
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-ink-800">{job.title}</p>
+                          <p className="truncate text-xs text-ink-500">
+                            {[job.company, job.location].filter(Boolean).join(' · ') || '—'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-sm shrink-0 bg-brand-50 text-brand-700 hover:bg-brand-100"
+                          disabled={analyzing || running}
+                          onClick={() => checkPoolJob(job.id)}
+                        >
+                          {analyzing && String(selectedJobId) === `pool-${job.id}` ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Target className="h-3 w-3" />
+                          )}
+                          Check compatibility
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="card card-pad">
                 <SectionHeading title="Your evidence" description="What the analysis will use." />
                 <div className="flex items-center gap-3 rounded-xl bg-ink-50 p-3">
@@ -356,7 +553,7 @@ export default function JobCompatibility() {
                   errors={full.errors}
                 />
               )}
-              <div className="grid gap-6 xl:grid-cols-5">
+              <div className="grid gap-6 xl:grid-cols-5" ref={reportRef}>
                 <div className="xl:col-span-2">
                   <ScoreCard report={report} score={result.overall_score} verdict={report?.verdict} />
                   <div className="mt-4 flex flex-wrap gap-2">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowRight,
   BookOpen,
@@ -14,16 +14,19 @@ import {
   Target,
 } from 'lucide-react'
 import api, { apiError } from '../services/api'
+import PoolJobPicker from '../components/PoolJobPicker'
 import { classNames, fmtDate } from '../services/utils'
 import { EmptyState, ErrorBanner, LoadingBlock, ProgressBar, SectionHeading } from '../components/ui'
 
 export default function SkillGap() {
   const [params] = useSearchParams()
+  const navigate = useNavigate()
   const gapId = params.get('gap')
   const [gap, setGap] = useState(null)
   const [options, setOptions] = useState([])
   const [loading, setLoading] = useState(true)
   const [busyTask, setBusyTask] = useState(null)
+  const [buildingRoadmap, setBuildingRoadmap] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -77,6 +80,21 @@ export default function SkillGap() {
     }
   }
 
+  async function createRoadmap(job) {
+    setBuildingRoadmap(true)
+    setError('')
+    try {
+      const created = await api.generateGapForJob({ job_id: job.id })
+      setGap(created)
+      setOptions((prev) => [created, ...prev.filter((o) => o.id !== created.id)])
+      navigate(`/skill-gap?gap=${created.id}`)
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setBuildingRoadmap(false)
+    }
+  }
+
   if (loading) return <LoadingBlock label="Loading your roadmap…" />
 
   const report = gap?.report
@@ -85,6 +103,15 @@ export default function SkillGap() {
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} onDismiss={() => setError('')} />
+
+      <PoolJobPicker
+        icon={Route}
+        title="Create a roadmap for a job from my pool"
+        description="RecruiMate reads the job's own requirements, prioritises your missing skills and builds a personalised learning plan — no pasting needed."
+        actionLabel="Create roadmap"
+        onPick={createRoadmap}
+        busy={buildingRoadmap}
+      />
 
       {!gap ? (
         <EmptyState

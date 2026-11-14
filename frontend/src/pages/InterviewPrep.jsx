@@ -14,6 +14,7 @@ import {
   Target,
 } from 'lucide-react'
 import api, { apiError } from '../services/api'
+import PoolJobPicker from '../components/PoolJobPicker'
 import { QUESTION_TYPE_META, classNames, fmtDate } from '../services/utils'
 import { Badge, EmptyState, ErrorBanner, LoadingBlock, SectionHeading } from '../components/ui'
 
@@ -35,6 +36,7 @@ export default function InterviewPrep() {
   const [openIndex, setOpenIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [poolBusy, setPoolBusy] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -65,6 +67,20 @@ export default function InterviewPrep() {
       setError(apiError(e))
     } finally {
       setGenerating(false)
+    }
+  }
+
+  async function generateFromPool(job) {
+    setPoolBusy(true)
+    setError('')
+    try {
+      const analysis = await api.analyzeCompatibility({ pool_job_id: job.id })
+      const rows = await api.listCompatibility()
+      setAnalyses(rows)
+      setCompatibilityId(String(analysis.id))
+      await generate(analysis.id)
+    } finally {
+      setPoolBusy(false)
     }
   }
 
@@ -130,6 +146,15 @@ export default function InterviewPrep() {
           </div>
         </div>
       </div>
+
+      <PoolJobPicker
+        icon={Brain}
+        title="Prep for a job from my pool"
+        description="Pick one of your saved jobs — RecruiMate scores it against your resume and builds the question bank from it."
+        actionLabel="Build question bank"
+        onPick={generateFromPool}
+        busy={poolBusy}
+      />
 
       {!analyses.length ? (
         <EmptyState

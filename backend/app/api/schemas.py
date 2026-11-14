@@ -14,6 +14,9 @@ class CompatibilityAnalyzeRequest(BaseModel):
     resume_id: int | None = None
     job_id: int | None = None
     job_description: str = ""
+    # Target-pool posting id (job_postings row). Mirrored into job_analyses
+    # before scoring so history/analytics treat it like any other analysis.
+    pool_job_id: int | None = None
     run_gap_analysis: bool = True
 
 
@@ -21,6 +24,7 @@ class AnalysisRunRequest(BaseModel):
     resume_id: int | None = None
     job_id: int | None = None
     job_description: str = ""
+    pool_job_id: int | None = None
 
 
 class GapGenerateRequest(BaseModel):
@@ -41,6 +45,44 @@ class PoolImportRequest(BaseModel):
     source: str = Field(default="remotive")
     query: str = Field(default="", max_length=120)
     limit: int = Field(default=12, ge=1, le=50)
+
+
+class CliSearchRequest(BaseModel):
+    """A read-only Jobs CLI search."""
+
+    query: str = Field(default="", max_length=200)
+    location: str = Field(default="", max_length=200)
+    sources: list[str] = Field(default_factory=list, max_length=5)
+    remote: bool = False
+    limit: int = Field(default=25, ge=1, le=100)
+    offset: int = Field(default=0, ge=0, le=10000)
+    country: str = Field(default="", max_length=8)
+
+
+class CliImportRequest(BaseModel):
+    """Selected CLI listings to add to the caller's pool."""
+
+    listings: list[dict] = Field(default_factory=list, max_length=100)
+
+
+class CliTrackRequest(BaseModel):
+    """Bookmark / application-tracking payload."""
+
+    job_posting_id: int | None = None
+    status: str = Field(default="", max_length=32)
+    note: str = Field(default="", max_length=4000)
+
+
+class PoolSingleRequest(BaseModel):
+    """Persist one browsed listing into the caller's pool."""
+
+    title: str = Field(min_length=1, max_length=255)
+    company: str = Field(default="", max_length=255)
+    location: str = Field(default="", max_length=255)
+    url: str = Field(min_length=1, max_length=1024)
+    source: str = Field(default="manual", max_length=64)
+    tags: list[str] = Field(default_factory=list)
+    description: str = Field(default="", max_length=40000)
 
 
 class PoolAddRequest(BaseModel):

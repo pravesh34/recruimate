@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -41,6 +42,27 @@ def resume_to_dict(resume: ResumeProfile, include_text: bool = False) -> dict:
     return data
 
 
+def _write_canonical_pdf(user_id: int, original_path: Path, raw_text: str, filename: str) -> Path | None:
+    """Render the resume text to a PDF next to the original upload.
+
+    Returns the PDF path, or ``None`` when PDF rendering is unavailable
+    (the original upload is still kept and served).
+    """
+    try:
+        from ..services.resume_pdf import render_resume_pdf
+
+        pdf_bytes = render_resume_pdf(raw_text, title=Path(filename).stem or "Resume")
+    except Exception:  # pragma: no cover - reportlab missing or bad input
+        return None
+    pdf_path = settings.upload_path / f"{original_path.stem}.pdf"
+    try:
+        pdf_path.write_bytes(pdf_bytes)
+        pdf_path.chmod(0o600)
+    except OSError:
+        return None
+    return pdf_path
+
+
 @router.post("/upload")
 async def upload_resume(
     file: UploadFile = File(...),
@@ -58,6 +80,15 @@ async def upload_resume(
         raise HTTPException(413, f"File exceeds the {settings.max_upload_mb} MB limit.")
     if len(data) < 40:
         raise HTTPException(400, "The uploaded file is empty.")
+
+    # Verify the file signature (magic bytes) matches the extension: a text
+    # payload renamed to .pdf — or worse, an executable/script — is rejected
+    # before it ever reaches the parser or disk.
+    head = data[:8]
+    if suffix == "pdf" and not head.startswith(b"%PDF"):
+        raise HTTPException(400, "That file is not a valid PDF (file content does not match the extension).")
+    if suffix == "docx" and not head.startswith(b"PK\x03\x04"):
+        raise HTTPException(400, "That file is not a valid DOCX (file content does not match the extension).")
 
     from ..agents.resume_agent import ResumeAgent
     from ..services.resume_parser import clean_text, extract_text
@@ -78,10 +109,16 @@ async def upload_resume(
     except OSError:
         pass
 
+    # Canonical PDF version: every resume is stored as PDF so the candidate
+    # always has one consistent, ATS-friendly document (even if they
+    # uploaded TXT/DOCX/Markdown).
+    pdf_path = _write_canonical_pdf(user.id, path, raw_text, filename)
+
     record = ResumeProfile(
         user_id=user_id,
         filename=filename[:255],
         storage_path=str(path),
+        pdf_path=str(pdf_path) if pdf_path else "",
         raw_text=raw_text,
         profile=profile.model_dump(),
         provider=provider,
@@ -113,6 +150,63 @@ def get_profile_by_id(resume_id: int, db: Session = Depends(get_db), user: User 
     if not resume:
         raise HTTPException(404, "Resume not found.")
     return resume_to_dict(resume)
+
+
+_CONTENT_TYPES = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "txt": "text/plain; charset=utf-8",
+    "md": "text/markdown; charset=utf-8",
+}
+
+
+@router.get("/{resume_id}/download")
+def download_resume(
+    resume_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Serve the original uploaded file to its owner only.
+
+    The stored name is a UUID-prefixed name written at upload time, so it is
+    safe to build a path from; the extension lookup drives the content type.
+    Foreign resumes are reported as 404, never as 403, so ids cannot be
+    probed.
+    """
+    resume = db.get(ResumeProfile, resume_id)
+    if not resume or resume.user_id != user.id:
+        raise HTTPException(404, "Resume not found.")
+
+    # Prefer the canonical PDF rendering.
+    pdf_path = Path(resume.pdf_path or "")
+    if pdf_path.is_file():
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=Path(resume.filename or "resume").stem + ".pdf",
+            content_disposition_type="inline",
+        )
+
+    path = Path(resume.storage_path)
+    if path.is_file():
+        suffix = path.suffix.lstrip(".").lower()
+        media_type = _CONTENT_TYPES.get(suffix, "application/octet-stream")
+        download_name = Path(resume.filename or "resume").name
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=download_name,
+            content_disposition_type="inline",
+        )
+    # Seeded/demo profiles and pruned storage have no original file on disk.
+    # Serve the stored resume text instead so "open my resume" never dead-ends.
+    if (resume.raw_text or "").strip():
+        return Response(
+            content=resume.raw_text,
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": 'inline; filename="resume.txt"',
+            },
+        )
+    raise HTTPException(404, "The original file is no longer stored on this device.")
 
 
 @router.get("")
@@ -147,6 +241,11 @@ def delete_resume(resume_id: int, db: Session = Depends(get_db), user: User = De
         Path(resume.storage_path).unlink(missing_ok=True)
     except OSError:
         pass
+    if resume.pdf_path:
+        try:
+            Path(resume.pdf_path).unlink(missing_ok=True)
+        except OSError:
+            pass
     report_ids = [
         r.id for r in db.query(CompatibilityReport).filter_by(resume_id=resume_id).all()
     ]

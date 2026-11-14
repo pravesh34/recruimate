@@ -17,12 +17,13 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import api, { apiError } from '../services/api'
+import PoolJobPicker from '../components/PoolJobPicker'
 import { SCORE_DIMENSIONS, classNames, fmtDate, fmtDateTime, scoreTone } from '../services/utils'
 import InterviewChat from '../components/InterviewChat'
 import { CategoryRadar } from '../components/SkillChart'
 import { Badge, EmptyState, ErrorBanner, LoadingBlock, ProgressBar, ScoreRing, SectionHeading, StatCard } from '../components/ui'
 
-function StartScreen({ analyses, onStart, creating, error, selected, setSelected, limit, setLimit, sessions }) {
+function StartScreen({ analyses, onStart, creating, error, selected, setSelected, limit, setLimit, sessions, onPoolPick, poolBusy }) {
   return (
     <div className="grid gap-6 xl:grid-cols-3">
       <div className="space-y-6 xl:col-span-2">
@@ -51,6 +52,15 @@ function StartScreen({ analyses, onStart, creating, error, selected, setSelected
             </div>
           </div>
         </div>
+
+        <PoolJobPicker
+          icon={Target}
+          title="Interview for a job from my pool"
+          description="Pick one of your saved jobs — RecruiMate analyses it against your resume and starts the interview straight away."
+          actionLabel="Start interview for this job"
+          onPick={onPoolPick}
+          busy={poolBusy}
+        />
 
         {error && <ErrorBanner message={error} />}
 
@@ -334,6 +344,7 @@ export default function MockInterview() {
   const [limit, setLimit] = useState(6)
   const [loading, setLoading] = useState(Boolean(id))
   const [creating, setCreating] = useState(false)
+  const [poolBusy, setPoolBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -382,6 +393,32 @@ export default function MockInterview() {
       setError(apiError(e))
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function startFromPool(job) {
+    setPoolBusy(true)
+    setError('')
+    try {
+      // Analyse the pool job first (mirrors it into job_analyses), then start
+      // the interview on the fresh compatibility report.
+      const analysis = await api.analyzeCompatibility({ pool_job_id: job.id })
+      api
+        .listCompatibility()
+        .then((rows) => setAnalyses(rows))
+        .catch(() => {})
+      const data = await api.createInterview({
+        compatibility_id: analysis.id,
+        question_limit: limit,
+      })
+      setSession(data)
+      setEvaluation(null)
+      navigate(`/mock-interview/${data.id}`, { replace: true })
+      api.listInterviews().then(setSessions).catch(() => {})
+    } catch (e) {
+      setError(apiError(e))
+    } finally {
+      setPoolBusy(false)
     }
   }
 
@@ -500,6 +537,8 @@ export default function MockInterview() {
       limit={limit}
       setLimit={setLimit}
       sessions={sessions}
+      onPoolPick={startFromPool}
+      poolBusy={poolBusy}
     />
   )
 }

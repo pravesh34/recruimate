@@ -14,6 +14,9 @@ os.environ["EMBEDDINGS_BACKEND"] = "hashed"
 # own .env (which may enable auth/accounts).
 os.environ["AUTH_ENABLED"] = "false"
 os.environ["SEED_DEMO_ACCOUNTS"] = "false"
+# PyJWT warns when an HS256 key is shorter than 32 bytes; give tests a real
+# length secret so the suite is not drowned in key-length warnings.
+os.environ["JWT_SECRET"] = "test-only-secret-" + "0" * 40
 for key in (
     "OPENROUTER_API_KEY",
     "GROQ_API_KEY",

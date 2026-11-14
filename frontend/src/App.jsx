@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import JobSearch from './pages/JobSearch'
 import ResumeAnalysis from './pages/ResumeAnalysis'
+import Profile from './pages/Profile'
 import JobCompatibility from './pages/JobCompatibility'
 import SkillGap from './pages/SkillGap'
 import Pipeline from './pages/Pipeline'
@@ -52,6 +53,7 @@ export default function App() {
             <Route path="pipeline" element={<Pipeline />} />
             <Route path="tailor/:jobId" element={<Tailor />} />
             <Route path="resume" element={<ResumeAnalysis />} />
+            <Route path="profile" element={<Profile />} />
             <Route path="compatibility" element={<JobCompatibility />} />
             <Route path="skill-gap" element={<SkillGap />} />
             <Route path="interview-prep" element={<InterviewPrep />} />

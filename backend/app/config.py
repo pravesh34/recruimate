@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Set AUTH_ENABLED=true to turn on the account system (register/login/JWT).
     # While false the app stays in trusted-local mode for backwards compatibility.
     auth_enabled: bool = False
+    # JWT_SECRET must be overridden before enabling accounts: the default value
+    # is public (it ships in the source), so tokens signed with it can be
+    # forged by anyone. Startup fails loudly in production when auth is on
+    # with the default secret.
     jwt_secret: str = "change-me-local-dev-secret"
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 60
@@ -77,6 +81,24 @@ class Settings(BaseSettings):
     allowed_custom_hosts: str = "localhost,127.0.0.1,::1"
     allow_private_hosts: bool = True
 
+    # --- Jobs CLI integration (optional) -------------------------------------
+    # github.com/thedavidweng/jobs-cli — an agent-native CLI that searches
+    # Indeed, LinkedIn and a few public boards with stable JSON output.
+    # RecruiMate only runs read-only commands (search/show/status); it never
+    # applies to a job on the candidate's behalf.
+    jobs_cli_enabled: bool = False
+    # Absolute path or a name on PATH. Empty = look up "jobs-cli" on PATH.
+    jobs_cli_bin: str = ""
+    jobs_cli_timeout: float = 45.0
+    # Default Indeed market (ISO country code). Indeed needs a market.
+    jobs_cli_country: str = ""
+    # Directory holding the CLI's own config/session. RecruiMate never reads
+    # or returns its contents.
+    jobs_cli_config_dir: str = ""
+    # Per-user request budget and the short-lived search cache.
+    jobs_cli_rate_limit_per_minute: int = 10
+    jobs_cli_cache_ttl: int = 120
+
     # Embeddings: "auto" uses sentence-transformers when installed, else hashed TF-IDF.
     embeddings_backend: str = "auto"
     sentence_transformer_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -98,3 +120,15 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+if settings.auth_enabled and settings.jwt_secret == "change-me-local-dev-secret":
+    message = (
+        "AUTH_ENABLED=true with the default JWT_SECRET is not safe: that secret is "
+        "public in the source, so access tokens for any account can be forged. "
+        "Set JWT_SECRET to a long random value (e.g. `openssl rand -hex 32`)."
+    )
+    if settings.environment == "production":
+        raise RuntimeError(message)
+    import warnings as _warnings
+
+    _warnings.warn(message, RuntimeWarning, stacklevel=2)

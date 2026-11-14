@@ -32,6 +32,12 @@ jobs:
           API_TOKEN: ""
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: python -m pytest -q -p pytest_asyncio
+      - name: Dependency vulnerability audit
+        # Reports vulnerabilities in the job log; non-blocking until the
+        # current findings are triaged (see security notes in ARCHITECTURE.md).
+        run: |
+          pip install pip-audit
+          pip-audit --skip-editable --strict || true
 
   frontend:
     runs-on: ubuntu-latest

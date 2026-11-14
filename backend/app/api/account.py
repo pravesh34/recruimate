@@ -15,10 +15,13 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database.models import (
+    AuthSession,
     CompatibilityReport,
     InterviewSession,
     JobAnalysis,
+    JobPosting,
     LearningTask,
+    PipelineEntry,
     ProviderConfiguration,
     ResumeProfile,
     SkillGapReport,
@@ -89,5 +92,17 @@ def delete_all_data(
         db.query(model).filter(model.user_id == user.id).delete(
             synchronize_session=False
         )
+    # Pipeline entries, the caller's own pool postings and every refresh
+    # session must go too, or deletion would leave orphaned rows and
+    # refresh tokens that still resolve against a deleted account.
+    db.query(PipelineEntry).filter(PipelineEntry.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.query(JobPosting).filter(JobPosting.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.query(AuthSession).filter(AuthSession.user_id == user.id).delete(
+        synchronize_session=False
+    )
     db.commit()
     return {"deleted": True, "deleted_at": dt.datetime.now(dt.timezone.utc).isoformat()}

@@ -6,6 +6,7 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   ChevronDown,
+  FileText,
   GraduationCap,
   Lightbulb,
   Mail,
@@ -188,6 +189,36 @@ export default function ResumeAnalysis() {
                   <span className="text-[11px] text-brand-200/60">
                     {resume.filename} · {fmtDate(resume.created_at)}
                   </span>
+                  <button
+                    type="button"
+                    className="btn btn-sm border-white/20 bg-white/10 text-white hover:bg-white/20"
+                    onClick={async (event) => {
+                      const button = event.currentTarget
+                      const previous = button.innerHTML
+                      button.disabled = true
+                      try {
+                        const blob = await api.downloadResume(resume.id)
+                        const url = URL.createObjectURL(blob)
+                        // Programmatic anchor: window.open after an await is
+                        // popup-blocked (the user gesture is gone), but an
+                        // <a download> click is not.
+                        const anchor = document.createElement('a')
+                        anchor.href = url
+                        anchor.download = resume.filename || 'resume'
+                        document.body.appendChild(anchor)
+                        anchor.click()
+                        anchor.remove()
+                        setTimeout(() => URL.revokeObjectURL(url), 60_000)
+                      } catch (e) {
+                        setError(apiError(e))
+                      } finally {
+                        button.disabled = false
+                        button.innerHTML = previous
+                      }
+                    }}
+                  >
+                    <FileText className="h-3 w-3" /> Open my resume
+                  </button>
                   <Link to="/compatibility" className="btn bg-white text-brand-900 hover:bg-brand-50 btn-sm">
                     Match to a job <ArrowRight className="h-3 w-3" />
                   </Link>

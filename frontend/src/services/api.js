@@ -3,7 +3,9 @@ import axios from 'axios'
 const client = axios.create({
   baseURL: '/api',
   timeout: 180000,
-  headers: { 'Content-Type': 'application/json' },
+  // No default Content-Type: axios sets application/json for plain objects
+  // and multipart/form-data (with boundary) for FormData. Forcing it here
+  // broke resume uploads with "Field required: body.file".
 })
 
 const token = import.meta.env.VITE_API_TOKEN
@@ -103,7 +105,8 @@ export const api = {
     form.append('file', file)
     return client
       .post('/resume/upload', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        // Do NOT set Content-Type here: the browser must add the multipart
+        // boundary. Setting it manually makes the server fail to parse the form.
         onUploadProgress: (e) => {
           if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
         },
@@ -113,6 +116,8 @@ export const api = {
   getResume: () => client.get('/resume/profile').then((r) => r.data),
   getResumeById: (id) => client.get(`/resume/profile/${id}`).then((r) => r.data),
   listResumes: () => client.get('/resume').then((r) => r.data),
+  // Fetch the original uploaded file as a Blob so it can be opened or saved.
+  downloadResume: (id) => client.get(`/resume/${id}/download`, { responseType: 'blob' }).then((r) => r.data),
   deleteResume: (id) => client.delete(`/resume/${id}`).then((r) => r.data),
 
   // Jobs
@@ -129,6 +134,22 @@ export const api = {
 
   // Target job pool (per candidate)
   importJobs: (payload) => client.post('/jobs/pool/import', payload).then((r) => r.data),
+  searchBoard: (payload) => client.post('/jobs/pool/search', payload).then((r) => r.data),
+  addListingToPool: (payload) => client.post('/jobs/pool/import-single', payload).then((r) => r.data),
+
+  // Jobs CLI integration (LinkedIn / Indeed / public boards) — read-only search
+  cliStatus: () => client.get('/jobs-cli/status').then((r) => r.data),
+  cliSearch: (payload) => client.post('/jobs-cli/search', payload).then((r) => r.data),
+  cliImport: (listings) => client.post('/jobs-cli/import', { listings }).then((r) => r.data),
+  cliSync: (payload) => client.post('/jobs-cli/sync', payload).then((r) => r.data),
+  cliSyncStatus: (runId) => client.get(`/jobs-cli/sync/${runId}`).then((r) => r.data),
+  cliListings: (params) => client.get('/jobs-cli/listings', { params }).then((r) => r.data),
+  cliBookmarks: () => client.get('/jobs-cli/bookmarks').then((r) => r.data),
+  cliBookmark: (jobPostingId, note) =>
+    client.post('/jobs-cli/bookmark', { job_posting_id: jobPostingId, note }).then((r) => r.data),
+  cliUnbookmark: (id) => client.delete(`/jobs-cli/bookmark/${id}`).then((r) => r.data),
+  cliTrack: (jobPostingId, status) =>
+    client.post('/jobs-cli/track', { job_posting_id: jobPostingId, status }).then((r) => r.data),
   listPool: () => client.get('/jobs/pool').then((r) => r.data),
   addToPool: (payload) => client.post('/jobs/pool/add', payload).then((r) => r.data),
   deletePoolJob: (id) => client.delete(`/jobs/pool/${id}`).then((r) => r.data),

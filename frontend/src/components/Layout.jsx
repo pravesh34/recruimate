@@ -16,6 +16,7 @@ import {
   Settings,
   Sparkles,
   Target,
+  UserRound,
   X,
 } from 'lucide-react'
 import { classNames } from '../services/utils'
@@ -26,6 +27,7 @@ const NAV = [
   { to: '/jobs', label: 'Job search', icon: Search },
   { to: '/pipeline', label: 'Pipeline', icon: ListChecks },
   { to: '/resume', label: 'Resume analysis', icon: FileText },
+  { to: '/profile', label: 'My profile', icon: UserRound },
   { to: '/compatibility', label: 'Job compatibility', icon: Target },
   { to: '/skill-gap', label: 'Skill gap & roadmap', icon: Route },
   { to: '/interview-prep', label: 'Interview prep', icon: MessagesSquare },
@@ -38,6 +40,7 @@ const TITLES = {
   '/': { title: 'Dashboard', subtitle: 'Your preparation at a glance' },
   '/jobs': { title: 'Job search', subtitle: 'Every posting ranked against your resume' },
   '/resume': { title: 'Resume analysis', subtitle: 'Extract, review and strengthen your resume' },
+  '/profile': { title: 'My profile', subtitle: 'Your evidence, skills, pool and history' },
   '/compatibility': { title: 'Job compatibility', subtitle: 'See how your evidence maps to the role' },
   '/skill-gap': { title: 'Skill gap & roadmap', subtitle: 'Turn gaps into a focused learning plan' },
   '/interview-prep': { title: 'Interview prep', subtitle: 'A question bank built from your profile' },

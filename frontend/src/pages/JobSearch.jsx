@@ -1,14 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Briefcase, Globe, Lightbulb, Search, Sparkles, Upload } from 'lucide-react'
+import { Briefcase, Lightbulb, Sparkles, Upload } from 'lucide-react'
 import api, { apiError } from '../services/api'
 import JobMatchRanking from '../components/JobMatchRanking'
+import JobSearchPanel from '../components/JobSearchPanel'
 import { EmptyState, ErrorBanner, LoadingBlock } from '../components/ui'
-
-const SOURCES = [
-  { value: 'remotive', label: 'Remotive (remote jobs)' },
-  { value: 'remoteok', label: 'RemoteOK' },
-]
 
 export default function JobSearch() {
   const [resume, setResume] = useState(null)
@@ -17,11 +13,6 @@ export default function JobSearch() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const [source, setSource] = useState('remotive')
-  const [query, setQuery] = useState('')
-  const [importLimit, setImportLimit] = useState(12)
-  const [importing, setImporting] = useState(false)
-  const [importNote, setImportNote] = useState('')
   const [poolSize, setPoolSize] = useState(null)
   const [insights, setInsights] = useState(null)
   const [buildingPlan, setBuildingPlan] = useState(false)
@@ -45,22 +36,12 @@ export default function JobSearch() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function importJobs() {
-    setImporting(true)
-    setImportNote('')
-    setError('')
+  async function refreshPool() {
     try {
-      const result = await api.importJobs({ source, query, limit: importLimit })
-      setPoolSize(result.pool_size)
-      setImportNote(
-        `Imported ${result.imported} new posting${result.imported === 1 ? '' : 's'}` +
-          (result.updated ? `, refreshed ${result.updated}` : '') +
-          ` from ${result.source}. Your pool now holds ${result.pool_size}.`
-      )
-    } catch (e) {
-      setError(apiError(e))
-    } finally {
-      setImporting(false)
+      const pool = await api.listPool()
+      if (pool && typeof pool.total === 'number') setPoolSize(pool.total)
+    } catch {
+      /* the count is cosmetic — ignore failures */
     }
   }
 
@@ -205,88 +186,7 @@ export default function JobSearch() {
         </div>
       )}
 
-      <div className="card card-pad">
-        <div className="mb-3 flex items-center gap-2">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
-            <Globe className="h-4 w-4" />
-          </span>
-          <div>
-            <h3 className="section-title">Import real jobs into your pool</h3>
-            <p className="mt-0.5 text-xs text-ink-500">
-              Live postings from public job boards, pulled server-side. Each candidate's pool is private.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="min-w-[180px] flex-1">
-            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-500">
-              Board
-            </span>
-            <select
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm font-medium text-ink-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            >
-              {SOURCES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="min-w-[220px] flex-[2]">
-            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-500">
-              Search term (optional)
-            </span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. backend engineer, data analyst, fastapi"
-              className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            />
-          </label>
-
-          <label className="w-24">
-            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-500">
-              Count
-            </span>
-            <select
-              value={importLimit}
-              onChange={(e) => setImportLimit(Number(e.target.value))}
-              className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm font-medium text-ink-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            >
-              {[6, 12, 20, 30].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button
-            type="button"
-            onClick={importJobs}
-            disabled={importing}
-            className="btn-primary shrink-0"
-          >
-            {importing ? (
-              <Loader label="Importing…" />
-            ) : (
-              <>
-                <Search className="h-4 w-4" /> Import jobs
-              </>
-            )}
-          </button>
-        </div>
-
-        {importNote && (
-          <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            {importNote}
-          </p>
-        )}
-      </div>
+      <JobSearchPanel onImported={refreshPool} />
 
       <div className="card card-pad">
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -308,15 +208,6 @@ export default function JobSearch() {
         <p className="text-xs leading-relaxed text-ink-500">{resumeCountLabel(activeResume, poolSize)}</p>
       </div>
     </div>
-  )
-}
-
-function Loader({ label }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-      {label}
-    </span>
   )
 }
 

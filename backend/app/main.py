@@ -17,6 +17,7 @@ from .api import (
     dashboard,
     interviews,
     jobs,
+    jobs_cli,
     pipeline,
     providers,
     resume,
@@ -61,6 +62,25 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Baseline browser-hardening headers on every response.
+
+    The API returns JSON and serves the built SPA; frame-blocking, MIME
+    sniffing protection and a conservative referrer policy cost nothing and
+    close off common clickjacking/drivedownload paths without breaking the
+    PWA or the /docs page.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'"
+    )
+    return response
+
+
 @app.exception_handler(ResumeParseError)
 async def resume_error_handler(request: Request, exc: ResumeParseError):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
@@ -83,7 +103,7 @@ def health():
     }
 
 
-for module in (auth, resume, jobs, compatibility, skill_gaps, interviews, providers, dashboard, pipeline, account):
+for module in (auth, resume, jobs, jobs_cli, compatibility, skill_gaps, interviews, providers, dashboard, pipeline, account):
     app.include_router(module.router)
 
 
