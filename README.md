@@ -7,6 +7,7 @@ interview. It is **not** a recruiter ATS and never submits applications or conta
 ![stack](https://img.shields.io/badge/Backend-FastAPI%20%2B%20LangGraph-0d1b4b?style=flat-square)
 ![stack](https://img.shields.io/badge/Frontend-React%20%2B%20Vite%20%2B%20Tailwind-2559e8?style=flat-square)
 ![offline](https://img.shields.io/badge/Offline-heuristic%20mode-12b981?style=flat-square)
+[![tests](https://github.com/pravesh34/recruimate/actions/workflows/tests.yml/badge.svg)](https://github.com/pravesh34/recruimate/actions/workflows/tests.yml)
 
 ## What it does
 
