@@ -8,6 +8,7 @@ import {
   FileText,
   Loader2,
   Printer,
+  Sparkles,
 } from 'lucide-react'
 import api, { apiError } from '../services/api'
 import { EmptyState, ErrorBanner, LoadingBlock } from '../components/ui'
@@ -60,11 +61,16 @@ export default function Tailor() {
     load()
   }, [load])
 
-  async function exportAs(format) {
-    setDownloading(format)
+  async function exportAs(format, variant = 'asis') {
+    setDownloading(variant === 'dream' ? 'dream' : format)
     try {
-      const blob = await api.tailorExport(Number(jobId), format, data?.resume_id)
-      download(blob, `tailored-${jobId}.${format}`)
+      const blob = await api.tailorExport(Number(jobId), format, data?.resume_id, variant)
+      if (format === 'pdf') {
+        const name = variant === 'dream' ? `dream-resume-${jobId}.pdf` : `tailored-resume-${jobId}.pdf`
+        download(blob, name)
+      } else {
+        download(blob, `tailored-${jobId}.${format}`)
+      }
     } catch (e) {
       setError(apiError(e))
     } finally {
@@ -206,17 +212,61 @@ export default function Tailor() {
       <div className="card card-pad">
         <h3 className="section-title">Export</h3>
         <p className="mt-0.5 text-xs text-ink-500">
-          HTML is print-styled — open it and use Print → Save as PDF.
+          Both PDFs are print-ready — no HTML-to-PDF dance, they download directly.
         </p>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-emerald-600" />
+              <h4 className="text-sm font-bold text-ink-900">My résumé (as-is)</h4>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-ink-600">
+              Your real profile, reordered to lead with the evidence this job cares about.
+              Nothing is invented — safe to send to the recruiter right now.
+            </p>
+            <button
+              type="button"
+              onClick={() => exportAs('pdf', 'asis')}
+              disabled={Boolean(downloading)}
+              className="btn-primary btn-sm mt-3 inline-flex items-center gap-1"
+            >
+              {downloading === 'asis' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              Download PDF
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-amber-600" />
+              <h4 className="text-sm font-bold text-ink-900">Dream résumé (target)</h4>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-ink-600">
+              What your résumé looks like once you close this job's gaps. Each missing skill
+              becomes a concrete build goal (◆) with a project idea — a work plan you can
+              start today. Clearly labelled; not for sending to recruiters.
+            </p>
+            <button
+              type="button"
+              onClick={() => exportAs('pdf', 'dream')}
+              disabled={Boolean(downloading)}
+              className="btn btn-sm mt-3 inline-flex items-center gap-1 bg-amber-100 text-amber-800 hover:bg-amber-200"
+            >
+              {downloading === 'dream' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              Download PDF
+            </button>
+          </div>
+        </div>
+
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => exportAs('html')}
             disabled={Boolean(downloading)}
-            className="btn-primary btn-sm inline-flex items-center gap-1"
+            className="btn-secondary btn-sm inline-flex items-center gap-1"
           >
             {downloading === 'html' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-            Download HTML
+            HTML (print-styled)
           </button>
           <button
             type="button"
@@ -225,7 +275,7 @@ export default function Tailor() {
             className="btn-secondary btn-sm inline-flex items-center gap-1"
           >
             {downloading === 'md' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-            Download Markdown
+            Markdown
           </button>
         </div>
       </div>

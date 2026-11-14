@@ -102,45 +102,7 @@ export default function JobSearch() {
         </div>
       </div>
 
-      {hasResume && resumes.length > 1 && (
-        <div className="card card-pad">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="section-title">Which resume should we score against?</h3>
-              <p className="mt-0.5 text-xs text-ink-500">
-                Switch profiles to re-rank the pool against different evidence.
-              </p>
-            </div>
-            <select
-              value={selectedId ?? ''}
-              onChange={(e) => setSelectedId(Number(e.target.value))}
-              className="rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm font-medium text-ink-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            >
-              {resumes.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.filename || `Resume #${r.id}`}
-                  {r.id === resume?.id ? ' (latest)' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
-
-      {hasResume ? (
-        <JobMatchRanking resumeId={selectedId ?? resume?.id} limit={20} />
-      ) : (
-        <EmptyState
-          icon={Upload}
-          title="Upload a resume first"
-          description="The ranking is driven by your extracted profile. Upload a PDF, DOCX or TXT resume and every posting gets scored against it."
-          action={
-            <Link to="/resume" className="btn-primary">
-              <Upload className="h-4 w-4" /> Upload resume
-            </Link>
-          }
-        />
-      )}
+      <JobSearchPanel onImported={refreshPool} />
 
       {insights?.jobs_scored > 0 && (
         <div className="card card-pad">
@@ -186,7 +148,45 @@ export default function JobSearch() {
         </div>
       )}
 
-      <JobSearchPanel onImported={refreshPool} />
+      {hasResume && resumes.length > 1 && (
+        <div className="card card-pad">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="section-title">Which resume should we score against?</h3>
+              <p className="mt-0.5 text-xs text-ink-500">
+                Switch profiles to re-rank the pool against different evidence.
+              </p>
+            </div>
+            <select
+              value={selectedId ?? ''}
+              onChange={(e) => setSelectedId(Number(e.target.value))}
+              className="rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm font-medium text-ink-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            >
+              {resumes.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.filename || `Resume #${r.id}`}
+                  {r.id === resume?.id ? ' (latest)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {hasResume ? (
+        <JobMatchRanking resumeId={selectedId ?? resume?.id} limit={20} />
+      ) : (
+        <EmptyState
+          icon={Upload}
+          title="Upload a resume first"
+          description="The ranking is driven by your extracted profile. Upload a PDF, DOCX or TXT resume and every posting gets scored against it."
+          action={
+            <Link to="/resume" className="btn-primary">
+              <Upload className="h-4 w-4" /> Upload resume
+            </Link>
+          }
+        />
+      )}
 
       <div className="card card-pad">
         <div className="mb-3 flex items-center justify-between gap-2">

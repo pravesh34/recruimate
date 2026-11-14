@@ -613,13 +613,62 @@ def tailor_export(
     job_id: int,
     resume_id: int | None = None,
     format: str = "html",
+    variant: str = "asis",
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Download the tailored application as print-ready HTML or Markdown."""
+    """Download the tailored application.
+
+    ``format=pdf`` renders a clean, ATS-friendly PDF in two variants:
+    ``asis`` — the candidate's real résumé, reordered for the job (nothing
+    invented); ``dream`` — a clearly-labelled development target with the
+    job's missing skills turned into concrete build goals.
+    """
     from fastapi.responses import Response
 
+    from ..services.tailor_pdf import build_asis_resume, build_dream_resume
     from ..services.tailor_service import tailor_html, tailor_markdown
+
+    posting = db.get(JobPosting, job_id)
+    if not posting or (posting.user_id is not None and posting.user_id != user.id):
+        raise HTTPException(404, "Pool job not found.")
+    resume = resolve_resume(db, user.id, resume_id)
+    if resume is None:
+        raise HTTPException(404, "Upload a resume first.")
+
+    try:
+        job_profile = build_job_profile(posting)
+    except Exception as exc:
+        raise HTTPException(422, f"That posting could not be parsed: {exc}") from exc
+    try:
+        candidate = candidate_from_resume(resume)
+    except Exception as exc:
+        raise HTTPException(400, f"Resume profile could not be parsed: {exc}") from exc
+
+    variant = (variant or "asis").lower()
+    if variant not in ("asis", "dream"):
+        variant = "asis"
+
+    if format == "pdf":
+        from ..services.tailor_service import tailor_for_job
+
+        tailor = tailor_for_job(candidate, job_profile, posting.raw_text or "")
+        job_ref = {
+            "id": posting.id,
+            "title": posting.title,
+            "company": posting.company,
+        }
+        if variant == "dream":
+            pdf = build_dream_resume(candidate, tailor, job_ref)
+            filename = f"dream-resume-{posting.id}.pdf"
+        else:
+            pdf = build_asis_resume(candidate, tailor, job_ref)
+            filename = f"tailored-resume-{posting.id}.pdf"
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     tailor = _tailor_payload(db, user, job_id, resume_id)
     job = tailor["job"]

@@ -179,12 +179,9 @@ export const api = {
         params: { job_id: jobId, ...(resumeId ? { resume_id: resumeId } : {}) },
       })
       .then((r) => r.data),
-  tailorExport: (jobId, format, resumeId) =>
+  tailorExport: (jobId, format, resumeId, variant) =>
     client
-      .get('/jobs/tailor/export', {
-        params: { job_id: jobId, format, ...(resumeId ? { resume_id: resumeId } : {}) },
-        responseType: 'blob',
-      })
+      .get(`/jobs/tailor/export`, { params: { job_id: jobId, format, resume_id: resumeId, variant }, responseType: 'blob' })
       .then((r) => r.data),
 
   // Compatibility / analysis
