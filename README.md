@@ -31,6 +31,8 @@ interview. It is **not** a recruiter ATS and never submits applications or conta
 turns gaps into tasks, and measures whether your interviews improve. The whole flow can run on **real,
 live job postings** imported straight from public job boards.
 
+📖 **Full architecture & every technology decision (X vs Y): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
 ## Architecture
 
 ```mermaid
